@@ -24,10 +24,12 @@ import subprocess
 from pathlib import Path
 from PIL import Image as PILImage
 
-# Vor Kivy-Imports setzen, damit SDL2 KMS/DRM nutzt (kein X-Server nötig).
-# Für lokales Testen auf dem Mac/PC auskommentieren oder auf 'x11' setzen.
-os.environ.setdefault('KIVY_WINDOW', 'sdl2')
-os.environ.setdefault('SDL_VIDEODRIVER', 'kmsdrm')
+# Auf dem Raspberry Pi KMS/DRM nutzen (kein X-Server nötig).
+# Auf dem Mac/PC läuft Kivy im nativen Fenster – keine Overrides nötig.
+import platform
+if platform.system() == 'Linux':
+    os.environ.setdefault('KIVY_WINDOW', 'sdl2')
+    os.environ.setdefault('SDL_VIDEODRIVER', 'kmsdrm')
 
 from kivy.app import App                                        # noqa: E402
 from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition  # noqa: E402
@@ -49,7 +51,10 @@ BASIS_DIR = Path.home() / 'medienbasis'
 THUMB_DIR = Path.home() / '.thumbs'
 USB_BASE_PATH = Path('/media/taf')
 SLIDESHOW_INTERVAL = 5          # Sekunden pro Bild
-THUMB_SIZE = (300, 200)         # Pixel
+THUMB_SIZE = (500, 340)         # Pixel
+TILE_SIZE = (460, 380)          # Breite x Höhe einer Kachel
+TILE_COLS = 4                   # Spalten im Kachelraster
+TILE_IMG_HEIGHT = 300           # Bildhöhe innerhalb der Kachel
 
 IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif'}
 ALLOWED_EXTS = IMAGE_EXTS | {'.mp4', '.avi', '.mkv', '.mov'}
@@ -178,28 +183,28 @@ class Kachel(BoxLayout):
     def __init__(self, title: str, thumb_path: str, callback, **kwargs):
         super().__init__(orientation='vertical', padding=8, spacing=4, **kwargs)
         self.size_hint = (None, None)
-        self.size = (300, 240)
+        self.size = TILE_SIZE
         self._callback = callback
 
         if thumb_path and Path(thumb_path).exists():
             self.add_widget(KivyImage(
                 source=thumb_path,
-                size_hint=(1, None), height=180,
+                size_hint=(1, None), height=TILE_IMG_HEIGHT,
                 allow_stretch=True, keep_ratio=True,
             ))
         else:
             self.add_widget(Label(
                 text='[Kein\nVorschaubild]',
                 halign='center',
-                size_hint=(1, None), height=180,
+                size_hint=(1, None), height=TILE_IMG_HEIGHT,
             ))
 
         self.add_widget(Label(
             text=title,
-            font_size='18sp',
-            size_hint=(1, None), height=44,
+            font_size='22sp',
+            size_hint=(1, None), height=60,
             halign='center',
-            text_size=(280, None),
+            text_size=(TILE_SIZE[0] - 20, None),
         ))
 
     def on_touch_up(self, touch):
@@ -229,7 +234,7 @@ class SpielsaisonScreen(Screen):
         ))
 
         scroll = ScrollView()
-        grid = GridLayout(cols=3, spacing=20, padding=20, size_hint_y=None)
+        grid = GridLayout(cols=TILE_COLS, spacing=20, padding=20, size_hint_y=None)
         grid.bind(minimum_height=grid.setter('height'))
 
         saisons = sorted(
@@ -274,7 +279,7 @@ class ProduktionenScreen(Screen):
         root.add_widget(header)
 
         scroll = ScrollView()
-        grid = GridLayout(cols=3, spacing=20, padding=20, size_hint_y=None)
+        grid = GridLayout(cols=TILE_COLS, spacing=20, padding=20, size_hint_y=None)
         grid.bind(minimum_height=grid.setter('height'))
 
         for prod in sorted(p for p in saison_path.iterdir() if p.is_dir()):
