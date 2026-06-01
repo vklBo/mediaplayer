@@ -51,10 +51,18 @@ BASIS_DIR = Path.home() / 'medienbasis'
 THUMB_DIR = Path.home() / '.thumbs'
 USB_BASE_PATH = Path('/media/taf')
 SLIDESHOW_INTERVAL = 5          # Sekunden pro Bild
-THUMB_SIZE = (500, 340)         # Pixel
-TILE_SIZE = (460, 380)          # Breite x Höhe einer Kachel
+THUMB_SIZE = (500, 340)         # Pixel für generierte Thumbnails
 TILE_COLS = 4                   # Spalten im Kachelraster
-TILE_IMG_HEIGHT = 300           # Bildhöhe innerhalb der Kachel
+GRID_PADDING = 20               # Außenabstand des Rasters
+GRID_SPACING = 16               # Abstand zwischen Kacheln
+
+
+def tile_size() -> tuple:
+    """Kachelgröße dynamisch aus der Fensterbreite berechnen."""
+    available = Window.width - 2 * GRID_PADDING - (TILE_COLS - 1) * GRID_SPACING
+    w = max(int(available / TILE_COLS), 100)
+    h = int(w * 0.85)           # leicht hochkant
+    return w, h
 
 IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif'}
 ALLOWED_EXTS = IMAGE_EXTS | {'.mp4', '.avi', '.mkv', '.mov'}
@@ -182,29 +190,32 @@ class Kachel(BoxLayout):
 
     def __init__(self, title: str, thumb_path: str, callback, **kwargs):
         super().__init__(orientation='vertical', padding=8, spacing=4, **kwargs)
-        self.size_hint = (None, None)
-        self.size = TILE_SIZE
         self._callback = callback
+
+        w, h = tile_size()
+        self.size_hint = (None, None)
+        self.size = (w, h)
+        img_h = h - 60          # Bildhöhe = Kachel minus Label-Zeile
 
         if thumb_path and Path(thumb_path).exists():
             self.add_widget(KivyImage(
                 source=thumb_path,
-                size_hint=(1, None), height=TILE_IMG_HEIGHT,
+                size_hint=(1, None), height=img_h,
                 allow_stretch=True, keep_ratio=True,
             ))
         else:
             self.add_widget(Label(
                 text='[Kein\nVorschaubild]',
                 halign='center',
-                size_hint=(1, None), height=TILE_IMG_HEIGHT,
+                size_hint=(1, None), height=img_h,
             ))
 
         self.add_widget(Label(
             text=title,
-            font_size='22sp',
-            size_hint=(1, None), height=60,
+            font_size='20sp',
+            size_hint=(1, None), height=52,
             halign='center',
-            text_size=(TILE_SIZE[0] - 20, None),
+            text_size=(w - 16, None),
         ))
 
     def on_touch_up(self, touch):
@@ -234,7 +245,7 @@ class SpielsaisonScreen(Screen):
         ))
 
         scroll = ScrollView()
-        grid = GridLayout(cols=TILE_COLS, spacing=20, padding=20, size_hint_y=None)
+        grid = GridLayout(cols=TILE_COLS, spacing=GRID_SPACING, padding=GRID_PADDING, size_hint_y=None)
         grid.bind(minimum_height=grid.setter('height'))
 
         saisons = sorted(
@@ -279,7 +290,7 @@ class ProduktionenScreen(Screen):
         root.add_widget(header)
 
         scroll = ScrollView()
-        grid = GridLayout(cols=TILE_COLS, spacing=20, padding=20, size_hint_y=None)
+        grid = GridLayout(cols=TILE_COLS, spacing=GRID_SPACING, padding=GRID_PADDING, size_hint_y=None)
         grid.bind(minimum_height=grid.setter('height'))
 
         for prod in sorted(p for p in saison_path.iterdir() if p.is_dir()):
