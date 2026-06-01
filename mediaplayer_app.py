@@ -70,6 +70,15 @@ IMAGE_EXTS   = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif'}
 ALLOWED_EXTS = IMAGE_EXTS | {'.mp4', '.avi', '.mkv', '.mov'}
 EXCLUDED_FILE = 'excluded.txt'
 
+# Ordner und Dateien, die beim USB-Kopieren übersprungen werden.
+# Deckt Papierkörbe von macOS, Windows und Linux ab.
+USB_SKIP = {
+    '.Trashes', '.Trash', '.trash',
+    '$RECYCLE.BIN', 'RECYCLED', 'RECYCLER',
+    'System Volume Information',
+    '.Spotlight-V100', '.fseventsd', '.TemporaryItems',
+}
+
 for _d in (MEDIA_DIR, BASIS_DIR, THUMB_DIR):
     _d.mkdir(exist_ok=True)
 
@@ -202,20 +211,30 @@ def _clear_dir(directory: Path):
             shutil.rmtree(item)
 
 
+def _is_usb_skip(path: Path) -> bool:
+    """True für Papierkorb-Ordner und versteckte Systemdateien aller OS."""
+    name = path.name
+    return name in USB_SKIP or name.startswith('.') or name.startswith('$')
+
+
 def _copy_flat(src: Path, dst: Path):
     for item in src.rglob('*'):
+        if any(_is_usb_skip(p) for p in item.parents) or _is_usb_skip(item):
+            continue
         if item.is_file() and item.suffix.lower() in ALLOWED_EXTS:
             shutil.copy2(item, dst / item.name)
 
 
 def _copy_structured(src: Path, dst: Path):
     for saison in src.iterdir():
+        if _is_usb_skip(saison):
+            continue
         if saison.name in ('medienbasis', 'skripte') or not saison.is_dir():
             continue
         target_saison = dst / saison.name
         target_saison.mkdir(exist_ok=True)
         for produktion in saison.iterdir():
-            if produktion.is_dir():
+            if produktion.is_dir() and not _is_usb_skip(produktion):
                 target_prod = target_saison / produktion.name
                 target_prod.mkdir(exist_ok=True)
                 _copy_flat(produktion, target_prod)
@@ -303,7 +322,7 @@ class Kachel(BoxLayout):
 class KurationOrdnerKachel(BoxLayout):
     """Kachel im Kurationsmodus: Thumbnail + ✗/✓-Button für ganzen Ordner."""
 
-    def __init__(self, prod_path: Path, excluded: bool, on_drill, on_toggle, **kwargs):
+    def __init__(self, prod_path: Path, excluded: bool, on_drill, on_toggle, on_delete, **kwargs):
         super().__init__(orientation='vertical', padding=8, spacing=4, **kwargs)
         w, h = tile_size()
         self.size_hint = (None, None)
@@ -332,53 +351,81 @@ class KurationOrdnerKachel(BoxLayout):
         btn_drill.bind(on_press=lambda *a: on_drill())
 
         btn_toggle = Button(
-            text='✓ einschließen' if excluded else '✗ ausschließen',
-            size_hint=(None, 1), width=170, font_size='14sp',
+            text='✓ einschl.' if excluded else '✗ ausschl.',
+            size_hint=(None, 1), width=120, font_size='13sp',
             background_color=(0.2, 0.7, 0.2, 1) if excluded else (0.7, 0.2, 0.2, 1),
         )
         btn_toggle.bind(on_press=lambda *a: on_toggle())
 
+        btn_delete = Button(
+            text='🗑', size_hint=(None, 1), width=54, font_size='18sp',
+            background_color=(0.5, 0.15, 0.15, 1),
+        )
+        btn_delete.bind(on_press=lambda *a: on_delete())
+
         controls.add_widget(btn_drill)
         controls.add_widget(btn_toggle)
+        controls.add_widget(btn_delete)
         self.add_widget(controls)
 
 
 class BildToggle(BoxLayout):
-    """Einzelbild-Thumbnail mit Ein-/Ausschluss-Toggle im Kurationsmodus."""
+    """Einzelbild-Thumbnail mit Ausschluss- und Löschen-Button."""
 
-    def __init__(self, img_path: Path, excluded: bool, on_toggle, **kwargs):
+    def __init__(self, img_path: Path, excluded: bool, marked_delete: bool,
+                 on_toggle, on_delete_toggle, **kwargs):
         super().__init__(orientation='vertical', padding=2, spacing=2, **kwargs)
         w, h = kuration_thumb_size()
         self.size_hint = (None, None)
-        self.size = (w, h + 28)
+        self.size = (w, h + 52)
         self._excluded = excluded
+        self._marked_delete = marked_delete
         self._on_toggle = on_toggle
+        self._on_delete_toggle = on_delete_toggle
 
         thumb = make_image_thumbnail(img_path)
+        opacity = 0.15 if marked_delete else (0.3 if excluded else 1.0)
         self._img = KivyImage(
             source=thumb if thumb else '',
             size_hint=(1, None), height=h,
             allow_stretch=True, keep_ratio=True,
-            opacity=0.25 if excluded else 1.0,
+            opacity=opacity,
         )
         self.add_widget(self._img)
 
-        self._btn = Button(
+        self._btn_excl = Button(
             text='✗ aus' if excluded else '✓ ein',
-            size_hint=(1, None), height=26, font_size='12sp',
+            size_hint=(1, None), height=24, font_size='11sp',
             background_color=(0.55, 0.55, 0.55, 1) if excluded else (0.2, 0.65, 0.2, 1),
         )
-        self._btn.bind(on_press=self._toggle)
-        self.add_widget(self._btn)
+        self._btn_excl.bind(on_press=self._toggle_excl)
+        self.add_widget(self._btn_excl)
 
-    def _toggle(self, *args):
+        self._btn_del = Button(
+            text='↩ behalten' if marked_delete else '🗑 löschen',
+            size_hint=(1, None), height=24, font_size='11sp',
+            background_color=(0.6, 0.3, 0.1, 1) if marked_delete else (0.35, 0.35, 0.35, 1),
+        )
+        self._btn_del.bind(on_press=self._toggle_del)
+        self.add_widget(self._btn_del)
+
+    def _toggle_excl(self, *args):
         self._excluded = not self._excluded
-        self._img.opacity = 0.25 if self._excluded else 1.0
-        self._btn.text = '✗ aus' if self._excluded else '✓ ein'
-        self._btn.background_color = (
+        self._img.opacity = 0.15 if self._marked_delete else (0.3 if self._excluded else 1.0)
+        self._btn_excl.text = '✗ aus' if self._excluded else '✓ ein'
+        self._btn_excl.background_color = (
             (0.55, 0.55, 0.55, 1) if self._excluded else (0.2, 0.65, 0.2, 1)
         )
         self._on_toggle(self._excluded)
+
+    def _toggle_del(self, *args):
+        self._marked_delete = not self._marked_delete
+        self._img.opacity = 0.15 if self._marked_delete else (0.3 if self._excluded else 1.0)
+        self._btn_del.text = '↩ behalten' if self._marked_delete else '🗑 löschen'
+        self._btn_del.background_color = (
+            (0.6, 0.3, 0.1, 1) if self._marked_delete else (0.35, 0.35, 0.35, 1)
+        )
+        self._on_delete_toggle(self._marked_delete)
 
 
 # ---------------------------------------------------------------------------
@@ -685,6 +732,7 @@ class KurationProdScreen(Screen):
                 excluded=is_folder_excluded(prod),
                 on_drill=lambda p=prod: self._drill(p),
                 on_toggle=lambda p=prod: self._toggle(p),
+                on_delete=lambda p=prod: self._delete_folder(p),
             ))
 
         scroll.add_widget(grid)
@@ -695,23 +743,34 @@ class KurationProdScreen(Screen):
         toggle_folder_excluded(prod_path)
         self._build()
 
+    def _delete_folder(self, prod_path: Path):
+        PinPopup(on_success=lambda: self._do_delete_folder(prod_path)).open()
+
+    def _do_delete_folder(self, prod_path: Path):
+        shutil.rmtree(prod_path, ignore_errors=True)
+        # Thumbnail löschen
+        thumb = THUMB_DIR / f"{prod_path.parent.name}__{prod_path.name}.jpg"
+        thumb.unlink(missing_ok=True)
+        self._build()
+
     def _drill(self, prod_path: Path):
         self.manager.get_screen('kuration_bilder').load(prod_path)
         _go_to(self.manager, 'kuration_bilder')
 
 
 class KurationBilderScreen(Screen):
-    """Kuration Ebene 3: Einzelne Bilder einer Produktion ein-/ausschließen."""
+    """Kuration Ebene 3: Einzelne Bilder einer Produktion ein-/ausschließen oder löschen."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._prod_path = None
         self._excluded = set()
+        self._to_delete = set()
 
     def load(self, prod_path: Path):
         self._prod_path = prod_path
-        # Laden ohne '*'-Eintrag (der gilt für ganzen Ordner, nicht Einzelbilder)
         self._excluded = load_excluded(prod_path) - {'*'}
+        self._to_delete = set()
         self._build()
 
     def _build(self):
@@ -721,23 +780,23 @@ class KurationBilderScreen(Screen):
         btn_save = Button(text='💾 Speichern', size_hint=(None, 1), width=180, font_size='18sp',
                           background_color=(0.2, 0.55, 0.2, 1))
         btn_save.bind(on_press=self._save)
-
         root.add_widget(make_header(
             self._prod_path.name,
             '← Produktionen', 'kuration_prod', self.manager,
             extra_buttons=[btn_save],
         ))
 
-        # Bulk-Aktionen
-        bar = BoxLayout(size_hint=(1, None), height=48, spacing=12, padding=(GRID_PADDING, 4))
         all_images = get_all_image_files(self._prod_path)
-        n_excl = len(self._excluded)
+        n_del = len(self._to_delete)
+        n_excl = len(self._excluded - self._to_delete)
+        bar = BoxLayout(size_hint=(1, None), height=48, spacing=12, padding=(GRID_PADDING, 4))
         bar.add_widget(Label(
-            text=f'{len(all_images) - n_excl} von {len(all_images)} eingeschlossen',
-            font_size='15sp', size_hint=(1, 1),
+            text=f'{len(all_images) - n_excl - n_del} eingeschlossen  '
+                 f'· {n_excl} ausgeblendet  · {n_del} zum Löschen',
+            font_size='14sp', size_hint=(1, 1),
         ))
-        btn_alle = Button(text='Alle einschließen', size_hint=(None, 1), width=200, font_size='14sp')
-        btn_keine = Button(text='Alle ausschließen', size_hint=(None, 1), width=200, font_size='14sp')
+        btn_alle  = Button(text='Alle ein',  size_hint=(None, 1), width=130, font_size='13sp')
+        btn_keine = Button(text='Alle aus',  size_hint=(None, 1), width=130, font_size='13sp')
         btn_alle.bind(on_press=lambda *a: self._bulk(include=True))
         btn_keine.bind(on_press=lambda *a: self._bulk(include=False))
         bar.add_widget(btn_alle)
@@ -746,15 +805,14 @@ class KurationBilderScreen(Screen):
 
         scroll = ScrollView()
         grid = make_grid(KURATION_COLS)
-
         for img_file in all_images:
-            excl = img_file.name in self._excluded
             grid.add_widget(BildToggle(
                 img_path=img_file,
-                excluded=excl,
+                excluded=img_file.name in self._excluded,
+                marked_delete=img_file.name in self._to_delete,
                 on_toggle=lambda state, f=img_file: self._on_toggle(f, state),
+                on_delete_toggle=lambda state, f=img_file: self._on_delete(f, state),
             ))
-
         scroll.add_widget(grid)
         root.add_widget(scroll)
         self.add_widget(root)
@@ -765,6 +823,12 @@ class KurationBilderScreen(Screen):
         else:
             self._excluded.discard(img_file.name)
 
+    def _on_delete(self, img_file: Path, marked: bool):
+        if marked:
+            self._to_delete.add(img_file.name)
+        else:
+            self._to_delete.discard(img_file.name)
+
     def _bulk(self, include: bool):
         if include:
             self._excluded.clear()
@@ -773,7 +837,22 @@ class KurationBilderScreen(Screen):
         self._build()
 
     def _save(self, *args):
-        save_excluded(self._prod_path, self._excluded)
+        # Dateien löschen
+        for name in self._to_delete:
+            f = self._prod_path / name
+            if f.exists():
+                f.unlink()
+            # Thumbnail ebenfalls löschen
+            thumb = THUMB_DIR / f"img__{self._prod_path.parent.name}__{self._prod_path.name}__{f.stem}.jpg"
+            thumb.unlink(missing_ok=True)
+
+        # Ausgeschlossene speichern (gelöschte nicht mehr aufführen)
+        remaining_excluded = self._excluded - self._to_delete
+        save_excluded(self._prod_path, remaining_excluded)
+
+        # Ordner-Thumbnail neu generieren
+        (THUMB_DIR / f"{self._prod_path.parent.name}__{self._prod_path.name}.jpg").unlink(missing_ok=True)
+
         _go_to(self.manager, 'kuration_prod', 'right')
 
 
