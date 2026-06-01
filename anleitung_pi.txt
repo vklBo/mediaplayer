@@ -1,52 +1,76 @@
-Pi konfigurieren mit Pi OS (immer mit graf. Oberfläche, da nur dann der USB-Automount richtig funktioniert) (Pi Zero: 32bit)
+Pi konfigurieren mit Pi OS Lite (64-bit, ohne Desktop) – Pi 4 empfohlen.
 
 User: taf
 
-Kopieren der relevanten Dateien
-scp *.py taf@pi2:
-scp *.sh taf@pi2:
+
+=== Dateien auf den Pi kopieren ===
+
+scp mediaplayer_app.py taf@<IP>:
+scp config_autostart.sh taf@<IP>:
 
 
-Konfigurieren des WLANs:
+=== WLAN konfigurieren ===
+
 sudo -i
 wpa_passphrase "TaF-Kasse" "EIA-TIA-568B-Cm" >> /etc/wpa_supplicant/wpa_supplicant.conf
 exit
 
 
-USB-Stick anschließen, um Automount auszulösen
+=== Installation und Autostart einrichten ===
 
-Installieren aller erforderlichen Programme (#jetzt im skript):
-sudo apt-get -y update
-sudo apt-get -y upgrade
-sudo apt-get -y install feh lshw     (ggf. vlc - sollte aber schon vorhanden sein). 
-
-
-Konfigurieren des Autostart-Services:
 sudo bash config_autostart.sh
 
 
+=== Testen ===
 
-Zum Testen: 
 sudo systemctl start taf_service.service
 systemctl status taf_service.service
+journalctl -u taf_service.service -f    # Live-Log
 
 
-Nach dem Starten des Pi sollte automatisch die Video-/Bilder-Show starten
-Es kann jederzeit in USB-Stick eingesteckt werden. Die Daten des Sticks werden auf den Pi kopiert. Er kann danach wieder abgezogen werden.
+=== Verzeichnisstruktur auf dem USB-Stick ===
 
-Auf einem Pi 4 und Pi 5 werden Videos und Bilder angezeigt, auf einem Pi Zero (bzw. kleiner 4) nur Bilder.
+Saisonen und Produktionen werden als Unterverzeichnisse erwartet:
+
+  USB-Stick/
+  ├── 2023-24/
+  │   ├── Faust/
+  │   │   ├── bild1.jpg
+  │   │   └── bild2.jpg
+  │   └── Hamlet/
+  │       └── ...
+  ├── 2024-25/
+  │   └── ...
+  ├── medienbasis/      ← Bilder, die immer im Grundstock bleiben (flach)
+  │   └── logo.jpg
+  └── skripte/          ← Python-Dateien werden ins Home-Verzeichnis kopiert
+
+USB-Stick anstecken → Daten werden kopiert → Stick kann abgezogen werden.
+Der Player springt danach automatisch zur Spielzeiten-Übersicht.
 
 
+=== Bedienung (Touch-Display) ===
 
-Zum Update der Bilder:
-Stick in den PI stecken. Die Bilder und Videos werden automatisch kopiert.
-Es gibt einen Grundstock an Bildern, die immer angezeigt werden. Sollen die ausgetauscht werden, müssen diese im Verzeichnis "medienbasis" liegen.
-Gibt es ein Verzeichnis "skripte" auf dem Stick, werden die darin befindlichen Dateien ins User-Home-Verzeichnis kopiert. Damit können die Programm, die auf dem Pi laufen, aktualisiert werden. Wurde das Main-Skript geändert, muss der PI neu gestartet werden. 
+1. Spielzeit antippen
+2. Produktion antippen → Diashow startet
+3. ‹ / › : manuell blättern
+4. "← Zurück": eine Ebene zurück
 
 
+=== Vorschaubilder ===
 
-IP-Adresse des Pi1:
-192.168.1.102
+Das erste Bild im Produktionsordner wird automatisch als Vorschau verwendet.
+Soll ein bestimmtes Bild als Vorschau dienen, einfach alphabetisch als erstes benennen (z.B. _preview.jpg).
+Thumbnails werden unter ~/.thumbs gecacht und bei jedem USB-Update neu generiert.
 
-IP-Adresse des Pi2:
-192.168.1.105	
+
+=== Hinweise zur Hardware ===
+
+Pi 4 / Pi 5:   volle Unterstützung, Touch, Diashow
+Pi Zero / 2:   zu langsam für Kivy – bitte play_mediafiles.py (altes Skript) verwenden
+
+
+=== IP-Adressen ===
+
+Pi 1: 192.168.1.102
+Pi 2: 192.168.1.105
