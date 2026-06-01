@@ -1,0 +1,52 @@
+Pi konfigurieren mit Pi OS (immer mit graf. Oberfläche, da nur dann der USB-Automount richtig funktioniert) (Pi Zero: 32bit)
+
+User: taf
+
+Kopieren der relevanten Dateien
+scp *.py taf@pi2:
+scp *.sh taf@pi2:
+
+
+Konfigurieren des WLANs:
+sudo -i
+wpa_passphrase "TaF-Kasse" "EIA-TIA-568B-Cm" >> /etc/wpa_supplicant/wpa_supplicant.conf
+exit
+
+
+USB-Stick anschließen, um Automount auszulösen
+
+Installieren aller erforderlichen Programme (#jetzt im skript):
+sudo apt-get -y update
+sudo apt-get -y upgrade
+sudo apt-get -y install feh lshw     (ggf. vlc - sollte aber schon vorhanden sein). 
+
+
+Konfigurieren des Autostart-Services:
+sudo bash config_autostart.sh
+
+
+
+Zum Testen: 
+sudo systemctl start taf_service.service
+systemctl status taf_service.service
+
+
+Nach dem Starten des Pi sollte automatisch die Video-/Bilder-Show starten
+Es kann jederzeit in USB-Stick eingesteckt werden. Die Daten des Sticks werden auf den Pi kopiert. Er kann danach wieder abgezogen werden.
+
+Auf einem Pi 4 und Pi 5 werden Videos und Bilder angezeigt, auf einem Pi Zero (bzw. kleiner 4) nur Bilder.
+
+
+
+Zum Update der Bilder:
+Stick in den PI stecken. Die Bilder und Videos werden automatisch kopiert.
+Es gibt einen Grundstock an Bildern, die immer angezeigt werden. Sollen die ausgetauscht werden, müssen diese im Verzeichnis "medienbasis" liegen.
+Gibt es ein Verzeichnis "skripte" auf dem Stick, werden die darin befindlichen Dateien ins User-Home-Verzeichnis kopiert. Damit können die Programm, die auf dem Pi laufen, aktualisiert werden. Wurde das Main-Skript geändert, muss der PI neu gestartet werden. 
+
+
+
+IP-Adresse des Pi1:
+192.168.1.102
+
+IP-Adresse des Pi2:
+192.168.1.105	
