@@ -43,6 +43,7 @@ from kivy.uix.scrollview import ScrollView                                  # no
 from kivy.uix.boxlayout import BoxLayout                                    # noqa: E402
 from kivy.uix.button import Button                                          # noqa: E402
 from kivy.uix.image import Image as KivyImage                               # noqa: E402
+from kivy.uix.popup import Popup                                            # noqa: E402
 from kivy.uix.label import Label                                            # noqa: E402
 from kivy.clock import Clock                                                # noqa: E402
 from kivy.core.window import Window                                         # noqa: E402
@@ -56,6 +57,7 @@ BASIS_DIR     = Path.home() / 'medienbasis'
 THUMB_DIR     = Path.home() / '.thumbs'
 USB_BASE_PATH = Path('/media/taf')
 
+KURATION_PIN       = '1234'  # PIN für den Kurationsmodus – hier ändern
 SLIDESHOW_INTERVAL = 5       # Sekunden pro Bild
 THUMB_SIZE         = (500, 340)
 KURATION_THUMB_SIZE = (200, 150)
@@ -380,6 +382,74 @@ class BildToggle(BoxLayout):
 
 
 # ---------------------------------------------------------------------------
+# PIN-Popup
+# ---------------------------------------------------------------------------
+
+class PinPopup(Popup):
+    """Zahlenpad-Popup. Ruft on_success() bei korrektem PIN auf."""
+
+    def __init__(self, on_success, **kwargs):
+        self._on_success = on_success
+        self._entered = ''
+
+        # Anzeige-Label
+        self._display = Label(text='', font_size='32sp', size_hint=(1, None), height=60)
+
+        # Zahlentasten 1–9, dann 0 + Löschen
+        numpad = GridLayout(cols=3, spacing=8, size_hint=(1, 1))
+        for digit in '123456789':
+            btn = Button(text=digit, font_size='28sp')
+            btn.bind(on_press=lambda b, d=digit: self._press(d))
+            numpad.add_widget(btn)
+
+        btn_clear = Button(text='⌫', font_size='28sp', background_color=(0.6, 0.3, 0.3, 1))
+        btn_clear.bind(on_press=lambda *a: self._clear())
+        btn_zero = Button(text='0', font_size='28sp')
+        btn_zero.bind(on_press=lambda *a: self._press('0'))
+        btn_cancel = Button(text='Abbrechen', font_size='20sp', background_color=(0.4, 0.4, 0.4, 1))
+        btn_cancel.bind(on_press=lambda *a: self.dismiss())
+
+        numpad.add_widget(btn_clear)
+        numpad.add_widget(btn_zero)
+        numpad.add_widget(btn_cancel)
+
+        content = BoxLayout(orientation='vertical', padding=16, spacing=12)
+        content.add_widget(Label(text='PIN eingeben', font_size='20sp', size_hint=(1, None), height=40))
+        content.add_widget(self._display)
+        content.add_widget(numpad)
+
+        super().__init__(
+            title='',
+            content=content,
+            size_hint=(None, None),
+            size=(380, 480),
+            auto_dismiss=False,
+            separator_height=0,
+        )
+
+    def _press(self, digit: str):
+        if len(self._entered) >= len(KURATION_PIN):
+            return
+        self._entered += digit
+        self._display.text = '●' * len(self._entered)
+        if len(self._entered) == len(KURATION_PIN):
+            if self._entered == KURATION_PIN:
+                self.dismiss()
+                self._on_success()
+            else:
+                self._display.text = 'Falscher PIN'
+                Clock.schedule_once(lambda dt: self._reset(), 1.2)
+
+    def _clear(self):
+        self._entered = self._entered[:-1]
+        self._display.text = '●' * len(self._entered)
+
+    def _reset(self):
+        self._entered = ''
+        self._display.text = ''
+
+
+# ---------------------------------------------------------------------------
 # Screens: normale Ansicht
 # ---------------------------------------------------------------------------
 
@@ -429,8 +499,10 @@ class SpielsaisonScreen(Screen):
         _go_to(self.manager, 'produktionen')
 
     def _enter_kuration(self, *args):
-        self.manager.get_screen('kuration_saison').build()
-        _go_to(self.manager, 'kuration_saison')
+        def _open():
+            self.manager.get_screen('kuration_saison').build()
+            _go_to(self.manager, 'kuration_saison')
+        PinPopup(on_success=_open).open()
 
 
 class ProduktionenScreen(Screen):
