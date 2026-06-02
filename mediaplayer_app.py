@@ -57,8 +57,10 @@ BASIS_DIR     = Path.home() / 'medienbasis'
 THUMB_DIR     = Path.home() / '.thumbs'
 USB_BASE_PATH = Path('/media/taf')
 
-KURATION_PIN       = '1234'  # PIN für den Kurationsmodus – hier ändern
-SLIDESHOW_INTERVAL = 5       # Sekunden pro Bild
+KURATION_PIN        = '1234'  # PIN für den Kurationsmodus – hier ändern
+SLIDESHOW_INTERVAL  = 5       # Sekunden pro Bild
+GRUNDSTOCK_INTERVAL = 5       # Jedes N-te Bild in der Diashow ist ein Grundstock-Bild
+                               # (0 = Grundstock deaktiviert)
 THUMB_SIZE         = (500, 340)
 KURATION_THUMB_SIZE = (200, 150)
 TILE_COLS          = 4
@@ -188,6 +190,28 @@ def get_image_files(folder: Path) -> list:
 def get_all_image_files(folder: Path) -> list:
     """Alle Bilder im Ordner – auch ausgeschlossene (für den Kurationsmodus)."""
     return sorted(f for f in folder.rglob('*') if f.suffix.lower() in IMAGE_EXTS)
+
+
+def get_grundstock_images() -> list:
+    """Alle Grundstock-Bilder aus BASIS_DIR."""
+    if not BASIS_DIR.exists():
+        return []
+    return sorted(f for f in BASIS_DIR.rglob('*') if f.suffix.lower() in IMAGE_EXTS)
+
+
+def interleave_grundstock(images: list, grundstock: list, interval: int) -> list:
+    """Streut Grundstock-Bilder alle `interval` Bilder in die Liste ein.
+    Die Grundstock-Bilder rotieren durch, egal wie lang die Produktion ist."""
+    if not grundstock or interval <= 0:
+        return images
+    result = []
+    g_idx = 0
+    for i, img in enumerate(images):
+        result.append(img)
+        if (i + 1) % interval == 0:
+            result.append(grundstock[g_idx % len(grundstock)])
+            g_idx += 1
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -612,8 +636,10 @@ class SlideshowScreen(Screen):
 
     def load(self, prod_path: Path):
         self._prod_name = prod_path.name
-        self._images = get_image_files(prod_path)
-        self._index = 0
+        prod_images = get_image_files(prod_path)
+        grundstock   = get_grundstock_images()
+        self._images = interleave_grundstock(prod_images, grundstock, GRUNDSTOCK_INTERVAL)
+        self._index  = 0
         self._show()
 
     def on_enter(self, *args):
@@ -628,8 +654,12 @@ class SlideshowScreen(Screen):
         if not self._images:
             self._info.text = 'Keine Bilder vorhanden.'
             return
-        self._img.source = str(self._images[self._index])
-        self._info.text = f'{self._prod_name}  –  {self._index + 1} / {len(self._images)}'
+        current = self._images[self._index]
+        self._img.source = str(current)
+        if current.is_relative_to(BASIS_DIR):
+            self._info.text = '★ Unsere Förderer'
+        else:
+            self._info.text = f'{self._prod_name}  –  {self._index + 1} / {len(self._images)}'
 
     def _advance(self, dt):
         if self._images:
