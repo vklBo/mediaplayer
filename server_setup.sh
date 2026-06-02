@@ -6,8 +6,9 @@
 #   1. Pakete installieren (rclone, syncthing, python3-deps, nfs)
 #   2. /srv/media anlegen und per NFS exportieren (optional, für LAN-Geräte)
 #   3. Syncthing als systemd-Service einrichten (Verteilung an Pis)
-#   4. Täglichen Sync-Cron einrichten (OneDrive → /srv/media)
-#   5. Watchdog-Service einrichten (Server fährt runter wenn keine Pis aktiv)
+#   4. OneDrive-Sync als Boot-Service einrichten (niedriger Priorität)
+#   5. Watchdog-Service einrichten (Server fährt runter wenn keine Pis aktiv
+#      UND Sync + Syncthing-Übertragung abgeschlossen sind)
 #
 # Nach dem Script noch manuell nötig:
 #   a) rclone config   → OneDrive/SharePoint-Konto verbinden
@@ -25,7 +26,6 @@ set -e
 MEDIA_DIR="/srv/media"
 TAF_USER="${SUDO_USER:-taf}"          # Benutzer unter dem der Service läuft
 SYNC_SCRIPT_DIR="/home/$TAF_USER/mediaplayer"
-SYNC_HOUR="3"                         # Uhrzeit des täglichen Syncs (03:00)
 
 # ---------------------------------------------------------------------------
 # Voraussetzungen prüfen
@@ -156,21 +156,42 @@ echo "      ✓ Watchdog-Timer aktiv (alle 5 Min)"
 echo "      → Pi-IPs in /etc/taf/watchdog.conf eintragen!"
 
 # ---------------------------------------------------------------------------
-# 6. Täglichen Sync-Cron einrichten
+# 6. OneDrive-Sync als Boot-Service einrichten (niedrige Priorität)
 # ---------------------------------------------------------------------------
 
-echo "[6/6] Sync-Cron einrichten..."
-CRON_LINE="0 $SYNC_HOUR * * * $TAF_USER python3 $SYNC_SCRIPT_DIR/sync_onedrive.py >> /var/log/taf_sync.log 2>&1"
-
-if ! crontab -u "$TAF_USER" -l 2>/dev/null | grep -q "sync_onedrive"; then
-    (crontab -u "$TAF_USER" -l 2>/dev/null; echo "$CRON_LINE") | crontab -u "$TAF_USER" -
-    echo "      ✓ Cron: täglich um ${SYNC_HOUR}:00 Uhr"
-else
-    echo "      ✓ Cron bereits vorhanden"
-fi
+echo "[6/6] Sync-Boot-Service einrichten..."
 
 touch /var/log/taf_sync.log
 chown "$TAF_USER:$TAF_USER" /var/log/taf_sync.log
+
+cat > /etc/systemd/system/taf-sync.service <<SERVICE
+[Unit]
+Description=TaF OneDrive-Sync (startet nach dem Boot)
+After=network-online.target syncthing@${TAF_USER}.service
+Wants=network-online.target
+# Syncthing (Pi-Verteilung) hat Vorrang – Sync startet erst danach
+
+[Service]
+Type=oneshot
+User=$TAF_USER
+# Niedrige CPU- und I/O-Priorität: Syncthing-Übertragungen an Pis haben Vorrang
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+ExecStart=python3 $SYNC_SCRIPT_DIR/sync_onedrive.py
+StandardOutput=append:/var/log/taf_sync.log
+StandardError=append:/var/log/taf_sync.log
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl daemon-reload
+systemctl enable taf-sync.service
+echo "      ✓ Sync-Service aktiviert (startet nach jedem Boot, niedrige Priorität)"
+echo "      → Log: /var/log/taf_sync.log"
+echo "      → Manuell starten: sudo systemctl start taf-sync.service"
 
 # ---------------------------------------------------------------------------
 # Zusammenfassung

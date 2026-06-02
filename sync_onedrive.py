@@ -37,6 +37,9 @@ TMP_DIR        = Path.home() / '.media_sync_tmp'
 
 EXCLUDED_FOLDERS_FILE = Path(__file__).parent / 'excluded_folders.txt'
 
+# Lock-Datei: existiert solange der Sync läuft (wird vom Watchdog geprüft)
+LOCK_FILE = Path('/tmp/taf_sync_running')
+
 # Bildoptimierung
 TARGET_SIZE   = (1920, 1080)
 JPEG_QUALITY  = 88               # 0–95, 88 = guter Kompromiss Qualität/Größe
@@ -442,6 +445,15 @@ def main():
         push_excluded_back()
         return
 
+    # Lock-Datei setzen – Watchdog wartet damit auf Fertigstellung
+    LOCK_FILE.touch()
+    try:
+        _run_sync(args)
+    finally:
+        LOCK_FILE.unlink(missing_ok=True)
+
+
+def _run_sync(args):
     if not args.no_sync:
         TMP_DIR.mkdir(exist_ok=True)
         run_rclone_sync(dry_run=args.dry_run)
