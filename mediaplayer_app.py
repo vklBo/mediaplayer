@@ -204,6 +204,15 @@ def load_quality_scores(folder: Path) -> dict:
         return {}
 
 
+def get_folder_quality_summary(prod_path: Path) -> tuple:
+    """Gibt (gesamt, flagged) zurück für einen Produktionsordner."""
+    scores = load_quality_scores(prod_path)
+    images = get_all_image_files(prod_path)
+    total   = len(images)
+    flagged = sum(1 for f in images if scores.get(f.name, {}).get('flagged'))
+    return total, flagged
+
+
 def get_grundstock_images() -> list:
     """Alle Grundstock-Bilder aus BASIS_DIR."""
     if not BASIS_DIR.exists():
@@ -363,7 +372,7 @@ class KurationOrdnerKachel(BoxLayout):
         w, h = tile_size()
         self.size_hint = (None, None)
         self.size = (w, h)
-        img_h = h - 100
+        img_h = h - 120
 
         thumb = make_thumbnail(prod_path)
         img = KivyImage(
@@ -376,9 +385,32 @@ class KurationOrdnerKachel(BoxLayout):
 
         self.add_widget(Label(
             text=prod_path.name, font_size='18sp',
-            size_hint=(1, None), height=36,
+            size_hint=(1, None), height=30,
             halign='center', text_size=(w - 16, None),
             color=(0.5, 0.5, 0.5, 1) if excluded else (1, 1, 1, 1),
+        ))
+
+        # Qualitätsstatistik
+        total, flagged = get_folder_quality_summary(prod_path)
+        if total > 0:
+            flag_ratio = flagged / total
+            if flagged == 0:
+                stat_text  = f'✓ {total} Bilder'
+                stat_color = (0.5, 0.8, 0.5, 1)
+            elif flag_ratio > 0.4:
+                stat_text  = f'⚠ {flagged} / {total}  – viele schlecht'
+                stat_color = (1.0, 0.5, 0.1, 1)   # orange: ganzen Ordner ausschließen?
+            else:
+                stat_text  = f'⚠ {flagged} / {total}'
+                stat_color = (1.0, 0.85, 0.2, 1)  # gelb
+        else:
+            stat_text  = 'Keine Bilder'
+            stat_color = (0.5, 0.5, 0.5, 1)
+
+        self.add_widget(Label(
+            text=stat_text, font_size='14sp',
+            size_hint=(1, None), height=24,
+            halign='center', color=stat_color,
         ))
 
         controls = BoxLayout(size_hint=(1, None), height=48, spacing=8)

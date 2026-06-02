@@ -43,9 +43,13 @@ JPEG_QUALITY  = 88               # 0–95, 88 = guter Kompromiss Qualität/Grö�
 
 # Qualitätsanalyse (theaterangepasst)
 # Schärfe wird nur auf hellen Bildbereichen gemessen (Bühne = beleuchtet).
-BRIGHT_PIXEL_MIN   = 60          # Mindestwert (0–255) für "hell"
+# Rauschen wird nur in dunklen Bereichen gemessen (Hintergrund/Schatten).
+BRIGHT_PIXEL_MIN   = 60          # Mindestwert (0–255) für "hell" (Bühne)
+DARK_PIXEL_MAX     = 80          # Maximalwert (0–255) für "dunkel" (Hintergrund)
 DARK_IMAGE_RATIO   = 0.05        # < 5% helle Pixel → Bild zu dunkel
 SHARPNESS_LOW      = 35          # Laplacian-Varianz < 35 → unscharf (flaggen)
+NOISE_THRESHOLD    = 9.0         # Immerkaer-Sigma > 9 in Schattenbereichen → verrauscht
+MIN_DARK_PIXELS    = 2000        # Mindestanzahl dunkler Pixel für Rauschanalyse
 DUPLICATE_HAMMING  = 8           # Hamming-Distanz für Duplikat-Erkennung
 
 IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif'}
@@ -93,27 +97,48 @@ def optimize_image(src: Path, dst: Path) -> int:
 # Qualitätsanalyse (theaterangepasst)
 # ---------------------------------------------------------------------------
 
+def _estimate_noise_dark(gray) -> float:
+    """
+    Schätzt Rauschpegel in dunklen Bildbereichen (Immerkaer-Methode).
+    Dunkle Bereiche = Hintergrund/Zuschauerraum bei Theaterfotos.
+    Gibt Noise-Sigma zurück (höher = mehr Rauschen).
+    """
+    import numpy as np
+    dark_mask = gray < DARK_PIXEL_MAX
+    n_dark = int(dark_mask.sum())
+    if n_dark < MIN_DARK_PIXELS:
+        return 0.0
+
+    import cv2
+    kernel = np.array([[1, -2, 1], [-2, 4, -2], [1, -2, 1]], dtype=np.float64)
+    conv = cv2.filter2D(gray.astype(np.float64), -1, kernel)
+    noise = float(np.sum(np.abs(conv[dark_mask])) * (0.5 * 3.14159) ** 0.5 / (6 * n_dark))
+    return round(noise, 2)
+
+
 def analyze_quality(path: Path) -> dict:
     """
-    Bewertet Schärfe und Helligkeit eines Theaterfotos.
+    Bewertet Schärfe, Helligkeit und Rauschen eines Theaterfotos.
 
-    Besonderheit Theater: Die Bühne ist beleuchtet, Hintergrund dunkel.
-    Schärfe wird daher nur über helle Bildbereiche berechnet.
-    Bewegungsunschärfe von Darstellern kann gewollt sein → konservativer Schwellwert.
+    Theaterangepasst:
+    - Schärfe: nur auf hellen Bildbereichen (beleuchtete Bühne)
+    - Rauschen: nur in dunklen Bereichen (Hintergrund, Schatten, hohe ISO)
+    - Konservativer Schwellwert für Unschärfe (Bewegung von Darstellern kann gewollt sein)
 
-    Gibt dict zurück: sharpness, brightness, flagged, reason
+    Gibt dict zurück: sharpness, brightness, noise, flagged, reason
     """
     try:
         import cv2
         import numpy as np
     except ImportError:
-        return {'sharpness': -1, 'brightness': -1, 'flagged': False,
-                'reason': 'opencv nicht installiert'}
+        return {'sharpness': -1, 'brightness': -1, 'noise': -1,
+                'flagged': False, 'reason': 'opencv nicht installiert'}
 
     try:
         img = cv2.imread(str(path))
         if img is None:
-            return {'sharpness': 0, 'brightness': 0, 'flagged': True, 'reason': 'Lesefehler'}
+            return {'sharpness': 0, 'brightness': 0, 'noise': 0,
+                    'flagged': True, 'reason': 'Lesefehler'}
 
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         bright_mask = gray > BRIGHT_PIXEL_MIN
@@ -124,24 +149,36 @@ def analyze_quality(path: Path) -> dict:
             return {
                 'sharpness': 0.0,
                 'brightness': int(gray.mean()),
+                'noise': round(_estimate_noise_dark(gray), 2),
                 'flagged': True,
                 'reason': 'Zu dunkel',
             }
 
         # Schärfe auf hellen (Bühnen-)Bereichen messen
-        laplacian = cv2.Laplacian(gray, cv2.CV_64F)
-        sharpness = float(laplacian[bright_mask].var())
+        laplacian  = cv2.Laplacian(gray, cv2.CV_64F)
+        sharpness  = float(laplacian[bright_mask].var())
         brightness = int(gray[bright_mask].mean())
 
-        flagged = sharpness < SHARPNESS_LOW
+        # Rauschen in dunklen (Hintergrund-)Bereichen messen
+        noise = _estimate_noise_dark(gray)
+
+        # Flagging-Logik – mehrere Gründe möglich
+        reasons = []
+        if sharpness < SHARPNESS_LOW:
+            reasons.append('Unscharf')
+        if noise > NOISE_THRESHOLD:
+            reasons.append('Verrauscht')
+
         return {
             'sharpness': round(sharpness, 1),
             'brightness': brightness,
-            'flagged': flagged,
-            'reason': 'Möglicherweise unscharf' if flagged else '',
+            'noise': noise,
+            'flagged': bool(reasons),
+            'reason': ' + '.join(reasons),
         }
     except Exception as e:
-        return {'sharpness': -1, 'brightness': -1, 'flagged': False, 'reason': str(e)}
+        return {'sharpness': -1, 'brightness': -1, 'noise': -1,
+                'flagged': False, 'reason': str(e)}
 
 # ---------------------------------------------------------------------------
 # Duplikat-Erkennung
