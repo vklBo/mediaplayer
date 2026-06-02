@@ -1,53 +1,65 @@
 #!/usr/bin/env python3
-# Synchronisiert Bilder von OneDrive/SharePoint nach ~/media/.
+# Synchronisiert Bilder von OneDrive/SharePoint nach /srv/media (Server).
 #
-# Typischer erster Ablauf:
-#   1. rclone config                              # einmalig: Browser-Login mit M365-Konto
-#   2. python3 sync_onedrive.py --list-folders    # alle Ordner auflisten → excluded_folders.txt
-#   3. excluded_folders.txt bearbeiten:           # Zeilen der gewünschten Ordner löschen
-#   4. python3 sync_onedrive.py                   # erster Sync (nur nicht ausgeschlossene Ordner)
+# Pipeline pro Produktionsordner:
+#   1. rclone sync → ~/.media_sync_tmp/
+#   2. Hochformat-Filter (Höhe > Breite → überspringen)
+#   3. Resize auf max. 1920×1080, EXIF entfernen, JPEG optimieren
+#   4. Qualitätsanalyse (Schärfe + Helligkeit, theaterangepasst)
+#   5. Duplikat-Erkennung (perceptual hash)
+#   6. quality_scores.json in Produktionsordner schreiben
+#   7. excluded.txt aus vorherigem Sync erhalten
 #
-# Weiterer Betrieb:
-#   python3 sync_onedrive.py                      # Sync + Verarbeitung
-#   python3 sync_onedrive.py --dry-run            # Zeigt nur, was passieren würde
-#   python3 sync_onedrive.py --push-excluded      # lokale excluded.txt zurück nach OneDrive
+# Aufruf:
+#   python3 sync_onedrive.py --list-folders   # Ordnerstruktur → excluded_folders.txt
+#   python3 sync_onedrive.py --dry-run        # Vorschau
+#   python3 sync_onedrive.py                  # Sync + Verarbeitung
+#   python3 sync_onedrive.py --push-excluded  # excluded.txt zurück nach OneDrive
+#   python3 sync_onedrive.py --no-sync        # Nur lokale Verarbeitung
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image as PILImage
 
 # ---------------------------------------------------------------------------
-# Konfiguration – hier anpassen
+# Konfiguration
 # ---------------------------------------------------------------------------
 
-RCLONE_REMOTE = 'onedrive'          # Name der rclone-Konfiguration (rclone config)
-RCLONE_PATH   = 'Theater/Fotos'     # Pfad in OneDrive/SharePoint
-MEDIA_DIR     = Path.home() / 'media'
-TMP_DIR       = Path.home() / '.media_sync_tmp'
+RCLONE_REMOTE  = 'onedrive'          # rclone-Konfigurationsname
+RCLONE_PATH    = 'Theater/Fotos'     # Pfad in OneDrive/SharePoint
+MEDIA_DIR      = Path('/srv/media')  # Ziel (wird per Syncthing verteilt)
+TMP_DIR        = Path.home() / '.media_sync_tmp'
 
-# Datei mit Ordnern, die beim Sync ÜBERSPRUNGEN werden.
-# Format: eine Zeile pro Ordner als "Saison/Produktion".
-# Leere Zeilen und Zeilen mit # werden ignoriert.
 EXCLUDED_FOLDERS_FILE = Path(__file__).parent / 'excluded_folders.txt'
+
+# Bildoptimierung
+TARGET_SIZE   = (1920, 1080)
+JPEG_QUALITY  = 88               # 0–95, 88 = guter Kompromiss Qualität/Größe
+
+# Qualitätsanalyse (theaterangepasst)
+# Schärfe wird nur auf hellen Bildbereichen gemessen (Bühne = beleuchtet).
+BRIGHT_PIXEL_MIN   = 60          # Mindestwert (0–255) für "hell"
+DARK_IMAGE_RATIO   = 0.05        # < 5% helle Pixel → Bild zu dunkel
+SHARPNESS_LOW      = 35          # Laplacian-Varianz < 35 → unscharf (flaggen)
+DUPLICATE_HAMMING  = 8           # Hamming-Distanz für Duplikat-Erkennung
 
 IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif'}
 
 # ---------------------------------------------------------------------------
-# excluded_folders.txt lesen
+# Hilfsfunktionen: excluded_folders.txt
 # ---------------------------------------------------------------------------
 
 def load_excluded_folders() -> set:
-    """Liest excluded_folders.txt und gibt eine Menge von 'Saison/Produktion'-Pfaden zurück."""
     if not EXCLUDED_FOLDERS_FILE.exists():
         return set()
-    lines = EXCLUDED_FOLDERS_FILE.read_text(encoding='utf-8').splitlines()
     return {
         line.strip().strip('/')
-        for line in lines
+        for line in EXCLUDED_FOLDERS_FILE.read_text(encoding='utf-8').splitlines()
         if line.strip() and not line.strip().startswith('#')
     }
 
@@ -56,40 +68,143 @@ def is_excluded_folder(saison: str, produktion: str, excluded: set) -> bool:
     return f'{saison}/{produktion}' in excluded or saison in excluded
 
 # ---------------------------------------------------------------------------
-# Hochformat-Prüfung
+# Bildoptimierung
 # ---------------------------------------------------------------------------
 
 def is_portrait(path: Path) -> bool:
     try:
-        with Image.open(path) as img:
+        with PILImage.open(path) as img:
             w, h = img.size
             return h > w
     except Exception:
         return False
 
+
+def optimize_image(src: Path, dst: Path) -> int:
+    """Resize auf TARGET_SIZE, EXIF entfernen, als JPEG speichern.
+    Gibt die Dateigröße in Bytes zurück."""
+    with PILImage.open(src) as img:
+        img = img.convert('RGB')
+        img.thumbnail(TARGET_SIZE, PILImage.LANCZOS)
+        img.save(dst, 'JPEG', quality=JPEG_QUALITY, optimize=True)
+    return dst.stat().st_size
+
 # ---------------------------------------------------------------------------
-# Verzeichnis-Flatten: Saison/Produktion/[beliebige Tiefe] → Saison/Produktion/
+# Qualitätsanalyse (theaterangepasst)
+# ---------------------------------------------------------------------------
+
+def analyze_quality(path: Path) -> dict:
+    """
+    Bewertet Schärfe und Helligkeit eines Theaterfotos.
+
+    Besonderheit Theater: Die Bühne ist beleuchtet, Hintergrund dunkel.
+    Schärfe wird daher nur über helle Bildbereiche berechnet.
+    Bewegungsunschärfe von Darstellern kann gewollt sein → konservativer Schwellwert.
+
+    Gibt dict zurück: sharpness, brightness, flagged, reason
+    """
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return {'sharpness': -1, 'brightness': -1, 'flagged': False,
+                'reason': 'opencv nicht installiert'}
+
+    try:
+        img = cv2.imread(str(path))
+        if img is None:
+            return {'sharpness': 0, 'brightness': 0, 'flagged': True, 'reason': 'Lesefehler'}
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        bright_mask = gray > BRIGHT_PIXEL_MIN
+        bright_ratio = float(bright_mask.sum()) / gray.size
+
+        # Zu dunkles Bild (kaum Bühnenlicht sichtbar)
+        if bright_ratio < DARK_IMAGE_RATIO:
+            return {
+                'sharpness': 0.0,
+                'brightness': int(gray.mean()),
+                'flagged': True,
+                'reason': 'Zu dunkel',
+            }
+
+        # Schärfe auf hellen (Bühnen-)Bereichen messen
+        laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+        sharpness = float(laplacian[bright_mask].var())
+        brightness = int(gray[bright_mask].mean())
+
+        flagged = sharpness < SHARPNESS_LOW
+        return {
+            'sharpness': round(sharpness, 1),
+            'brightness': brightness,
+            'flagged': flagged,
+            'reason': 'Möglicherweise unscharf' if flagged else '',
+        }
+    except Exception as e:
+        return {'sharpness': -1, 'brightness': -1, 'flagged': False, 'reason': str(e)}
+
+# ---------------------------------------------------------------------------
+# Duplikat-Erkennung
+# ---------------------------------------------------------------------------
+
+def compute_phash(path: Path) -> str:
+    """Perceptual Hash für Duplikat-Erkennung. Leer wenn imagehash fehlt."""
+    try:
+        import imagehash
+        with PILImage.open(path) as img:
+            return str(imagehash.phash(img))
+    except Exception:
+        return ''
+
+
+def hamming(h1: str, h2: str) -> int:
+    try:
+        return bin(int(h1, 16) ^ int(h2, 16)).count('1')
+    except Exception:
+        return 999
+
+
+def detect_duplicates(images: list) -> dict:
+    """Gibt dict zurück: Dateiname → Name des Originals (wenn Duplikat)."""
+    seen = {}     # hash → filename
+    dupes = {}
+    for img in images:
+        h = compute_phash(img)
+        if not h:
+            continue
+        for existing_hash, existing_name in seen.items():
+            if hamming(h, existing_hash) < DUPLICATE_HAMMING:
+                dupes[img.name] = existing_name
+                break
+        else:
+            seen[h] = img.name
+    return dupes
+
+# ---------------------------------------------------------------------------
+# Verarbeitung: Flatten + Optimieren + Analysieren
 # ---------------------------------------------------------------------------
 
 def collect_images(folder: Path):
-    """Alle Querformat-Bilddateien in folder, beliebig tief."""
-    result = []
-    portrait_count = 0
+    """Alle Querformat-Bilder aus folder (beliebige Tiefe)."""
+    result, skipped_portrait = [], 0
     for f in sorted(folder.rglob('*')):
         if f.suffix.lower() not in IMAGE_EXTS:
             continue
         if is_portrait(f):
-            portrait_count += 1
+            skipped_portrait += 1
             continue
         result.append(f)
-    return result, portrait_count
+    return result, skipped_portrait
 
 
 def process(src: Path, dst: Path, dry_run: bool = False) -> dict:
-    """Liest Saison/Produktion-Struktur aus src, schreibt nach dst."""
     excluded = load_excluded_folders()
-    stats = {'saisons': 0, 'produktionen': 0, 'kopiert': 0,
-             'hochformat': 0, 'konflikte': 0, 'uebersprungen': 0}
+    stats = {
+        'saisons': 0, 'produktionen': 0, 'kopiert': 0,
+        'hochformat': 0, 'konflikte': 0, 'uebersprungen': 0,
+        'flagged': 0, 'duplikate': 0,
+        'original_bytes': 0, 'optimiert_bytes': 0,
+    }
 
     for saison_dir in sorted(src.iterdir()):
         if not saison_dir.is_dir():
@@ -103,7 +218,7 @@ def process(src: Path, dst: Path, dry_run: bool = False) -> dict:
             if is_excluded_folder(saison_dir.name, prod_dir.name, excluded):
                 stats['uebersprungen'] += 1
                 if dry_run:
-                    print(f"  SKIP  {saison_dir.name}/{prod_dir.name}")
+                    print(f'  SKIP  {saison_dir.name}/{prod_dir.name}')
                 continue
 
             stats['produktionen'] += 1
@@ -111,65 +226,91 @@ def process(src: Path, dst: Path, dry_run: bool = False) -> dict:
             stats['hochformat'] += portrait_count
 
             if dry_run:
-                print(f"  SYNC  {saison_dir.name}/{prod_dir.name}: "
-                      f"{len(images)} Bilder, {portrait_count} Hochformat ignoriert")
+                print(f'  SYNC  {saison_dir.name}/{prod_dir.name}: '
+                      f'{len(images)} Bilder, {portrait_count} Hochformat ignoriert')
                 continue
 
             target_prod = dst / saison_dir.name / prod_dir.name
             target_prod.mkdir(parents=True, exist_ok=True)
 
-            # excluded.txt aus Zielordner bewahren
-            excl_path = target_prod / 'excluded.txt'
-            existing_excluded = excl_path.read_text(encoding='utf-8') if excl_path.exists() else None
+            # excluded.txt und quality_scores.json bewahren
+            excl_path  = target_prod / 'excluded.txt'
+            score_path = target_prod / 'quality_scores.json'
+            saved_excl   = excl_path.read_text('utf-8')  if excl_path.exists()  else None
+            saved_scores = json.loads(score_path.read_text('utf-8')) if score_path.exists() else {}
 
-            # Bilder kopieren – bei Namenskonflikt Ordnerpfad als Präfix
-            seen: dict[str, Path] = {}
+            # Duplikate erkennen
+            dupes = detect_duplicates(images)
+            stats['duplikate'] += len(dupes)
+
+            # Bilder kopieren + optimieren + analysieren
+            quality_scores = {}
+            seen_names: dict = {}
+
             for img in images:
                 name = img.name
-                if name in seen:
-                    rel = img.relative_to(prod_dir)
+                if name in seen_names:
+                    rel  = img.relative_to(prod_dir)
                     name = '__'.join(rel.parts)
                     stats['konflikte'] += 1
-                seen[name] = img
-                shutil.copy2(img, target_prod / name)
+                seen_names[name] = img
+
+                dst_img = target_prod / name
+                stats['original_bytes'] += img.stat().st_size
+                try:
+                    size = optimize_image(img, dst_img)
+                    stats['optimiert_bytes'] += size
+                except Exception as e:
+                    shutil.copy2(img, dst_img)
+                    stats['optimiert_bytes'] += dst_img.stat().st_size
+                    print(f'    Optimierung fehlgeschlagen ({name}): {e}')
+
                 stats['kopiert'] += 1
 
-            if existing_excluded is not None:
-                excl_path.write_text(existing_excluded, encoding='utf-8')
+                # Qualitätsanalyse (nur wenn noch kein Score vorhanden)
+                if name not in saved_scores:
+                    q = analyze_quality(dst_img)
+                    if img.name in dupes:
+                        q['flagged'] = True
+                        q['reason'] = f'Duplikat von {dupes[img.name]}'
+                else:
+                    q = saved_scores[name]
+                quality_scores[name] = q
+                if q.get('flagged'):
+                    stats['flagged'] += 1
+
+            # Scores speichern
+            score_path.write_text(
+                json.dumps(quality_scores, ensure_ascii=False, indent=2),
+                encoding='utf-8',
+            )
+            # excluded.txt wiederherstellen
+            if saved_excl is not None:
+                excl_path.write_text(saved_excl, encoding='utf-8')
 
     return stats
 
 # ---------------------------------------------------------------------------
-# rclone-Ordner auflisten → excluded_folders.txt erstellen
+# rclone: Ordner auflisten → excluded_folders.txt
 # ---------------------------------------------------------------------------
 
 def list_folders_and_write_exclude():
-    """
-    Listet alle Saison/Produktions-Ordner in OneDrive auf und schreibt sie
-    alle in excluded_folders.txt. Der Benutzer löscht dann die Zeilen der
-    Ordner, die er synchronisieren möchte.
-    """
-    print(f"Lese Ordnerstruktur von {RCLONE_REMOTE}:{RCLONE_PATH} …")
-    print("(Nur Verzeichnisse, keine Dateien – geht schnell)\n")
-
+    print(f'Lese Ordnerstruktur von {RCLONE_REMOTE}:{RCLONE_PATH} …')
     result = subprocess.run(
         ['rclone', 'lsd', '--recursive', f'{RCLONE_REMOTE}:{RCLONE_PATH}'],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        print("Fehler beim Auflisten der Ordner:", file=sys.stderr)
-        print(result.stderr, file=sys.stderr)
-        print("\nIst rclone konfiguriert? → rclone config", file=sys.stderr)
+        print('Fehler:', result.stderr, file=sys.stderr)
+        print('Ist rclone konfiguriert? → rclone config', file=sys.stderr)
         sys.exit(1)
 
-    # rclone lsd gibt aus: "          -1 2024-01-01 00:00:00        -1 Saison/Produktion"
     folders = []
     for line in result.stdout.splitlines():
         parts = line.split(None, 4)
         if len(parts) == 5:
             folders.append(parts[4].strip())
 
-    # Nur zwei Ebenen tief (Saison/Produktion), keine tieferen Unterordner
     two_level = sorted({
         '/'.join(f.split('/')[:2])
         for f in folders
@@ -177,21 +318,16 @@ def list_folders_and_write_exclude():
     })
 
     if not two_level:
-        print("Keine Unterordner gefunden. Stimmt der RCLONE_PATH?")
-        print(f"  Aktuell: {RCLONE_REMOTE}:{RCLONE_PATH}")
+        print('Keine Unterordner gefunden. Stimmt RCLONE_PATH?')
         sys.exit(1)
 
-    # Datei schreiben – alle Ordner sind standardmäßig ausgeschlossen
     lines = [
-        '# excluded_folders.txt – Ordner die NICHT synchronisiert werden',
-        '# Zeile löschen oder mit # auskommentieren = Ordner WIRD synchronisiert',
-        '# Saison alleine (ohne /Produktion) schließt die ganze Spielzeit aus.',
-        '#',
-        f'# Gefunden: {len(two_level)} Produktionen',
-        '#',
+        '# excluded_folders.txt',
+        '# Zeile löschen = Ordner WIRD synchronisiert',
+        '# Saison alleine (ohne /Produktion) schließt ganze Spielzeit aus.',
+        f'# {len(two_level)} Produktionen gefunden – alle zunächst ausgeschlossen.',
         '',
     ]
-    # Leerzeile zwischen Spielzeiten
     current_saison = None
     for folder in two_level:
         saison = folder.split('/')[0]
@@ -203,62 +339,46 @@ def list_folders_and_write_exclude():
         lines.append(folder)
 
     EXCLUDED_FOLDERS_FILE.write_text('\n'.join(lines) + '\n', encoding='utf-8')
-
-    print(f"✓ {len(two_level)} Produktionen gefunden.")
-    print(f"✓ Alle in '{EXCLUDED_FOLDERS_FILE.name}' eingetragen (alle ausgeschlossen).")
-    print()
-    print("Nächste Schritte:")
-    print(f"  1. '{EXCLUDED_FOLDERS_FILE.name}' öffnen")
-    print("  2. Zeilen der Ordner LÖSCHEN, die synchronisiert werden sollen")
-    print("  3. python3 sync_onedrive.py --dry-run   # Vorschau")
-    print("  4. python3 sync_onedrive.py             # Sync starten")
+    print(f'✓ {len(two_level)} Produktionen in {EXCLUDED_FOLDERS_FILE.name} eingetragen.')
+    print('→ Zeilen der gewünschten Ordner löschen, dann sync starten.')
 
 # ---------------------------------------------------------------------------
 # rclone-Sync
 # ---------------------------------------------------------------------------
 
 def run_rclone_sync(dry_run: bool = False):
+    excluded = load_excluded_folders()
     cmd = [
         'rclone', 'sync',
-        f'{RCLONE_REMOTE}:{RCLONE_PATH}',
-        str(TMP_DIR),
+        f'{RCLONE_REMOTE}:{RCLONE_PATH}', str(TMP_DIR),
         '--progress',
-        '--filter', '+ *.jpg',
-        '--filter', '+ *.jpeg',
-        '--filter', '+ *.png',
-        '--filter', '+ *.bmp',
+        '--filter', '+ *.jpg', '--filter', '+ *.jpeg',
+        '--filter', '+ *.png', '--filter', '+ *.bmp',
         '--filter', '+ *.gif',
         '--filter', '+ excluded.txt',
         '--filter', '- *',
     ]
-
-    # Ausgeschlossene Ordner als rclone-Filter ergänzen
-    excluded = load_excluded_folders()
     for folder in excluded:
         cmd += ['--exclude', f'{folder}/**']
-
     if dry_run:
         cmd.append('--dry-run')
 
-    print(f"rclone sync {RCLONE_REMOTE}:{RCLONE_PATH} → {TMP_DIR}")
+    print(f'rclone sync {RCLONE_REMOTE}:{RCLONE_PATH} → {TMP_DIR}')
     if excluded:
-        print(f"  ({len(excluded)} Ordner werden übersprungen)")
+        print(f'  ({len(excluded)} Ordner werden übersprungen)')
     result = subprocess.run(cmd)
     if result.returncode != 0:
-        print("Fehler beim rclone-Sync.", file=sys.stderr)
+        print('Fehler beim rclone-Sync.', file=sys.stderr)
         sys.exit(1)
 
 
 def push_excluded_back():
-    """Überträgt lokale excluded.txt-Dateien zurück nach OneDrive."""
     cmd = [
-        'rclone', 'copy',
-        str(MEDIA_DIR),
+        'rclone', 'copy', str(MEDIA_DIR),
         f'{RCLONE_REMOTE}:{RCLONE_PATH}',
-        '--include', 'excluded.txt',
-        '--progress',
+        '--include', 'excluded.txt', '--progress',
     ]
-    print("Übertrage excluded.txt-Dateien nach OneDrive …")
+    print('Übertrage excluded.txt-Dateien nach OneDrive …')
     subprocess.run(cmd)
 
 # ---------------------------------------------------------------------------
@@ -266,15 +386,15 @@ def push_excluded_back():
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description='OneDrive/SharePoint → ~/media Sync')
-    parser.add_argument('--list-folders', action='store_true',
-                        help='Ordnerstruktur auflisten und excluded_folders.txt erstellen')
-    parser.add_argument('--dry-run',  action='store_true',
+    parser = argparse.ArgumentParser(description='OneDrive → /srv/media Sync + Optimierung')
+    parser.add_argument('--list-folders',  action='store_true',
+                        help='Ordner auflisten und excluded_folders.txt erstellen')
+    parser.add_argument('--dry-run',       action='store_true',
                         help='Nur anzeigen, nicht kopieren')
-    parser.add_argument('--no-sync',  action='store_true',
-                        help='rclone überspringen, nur lokale Verarbeitung')
+    parser.add_argument('--no-sync',       action='store_true',
+                        help='rclone überspringen')
     parser.add_argument('--push-excluded', action='store_true',
-                        help='Lokale excluded.txt-Dateien zurück nach OneDrive übertragen')
+                        help='excluded.txt zurück nach OneDrive')
     args = parser.parse_args()
 
     if args.list_folders:
@@ -290,25 +410,36 @@ def main():
         run_rclone_sync(dry_run=args.dry_run)
 
     if args.dry_run:
-        print(f"\nVorschau: Verarbeitung {TMP_DIR} → {MEDIA_DIR}")
-        stats = process(TMP_DIR, MEDIA_DIR, dry_run=True)
-    else:
-        print(f"\nVerarbeite {TMP_DIR} → {MEDIA_DIR} …")
-        if MEDIA_DIR.exists():
-            for item in MEDIA_DIR.iterdir():
-                if item.is_dir():
-                    shutil.rmtree(item)
-        MEDIA_DIR.mkdir(exist_ok=True)
-        stats = process(TMP_DIR, MEDIA_DIR, dry_run=False)
+        print(f'\nVorschau: {TMP_DIR} → {MEDIA_DIR}')
+        process(TMP_DIR, MEDIA_DIR, dry_run=True)
+        return
 
-    print(f"\nErgebnis:")
-    print(f"  {stats['saisons']} Spielzeiten, {stats['produktionen']} Produktionen synchronisiert")
+    print(f'\nVerarbeite {TMP_DIR} → {MEDIA_DIR} …')
+    if MEDIA_DIR.exists():
+        for item in MEDIA_DIR.iterdir():
+            if item.is_dir():
+                shutil.rmtree(item)
+    MEDIA_DIR.mkdir(exist_ok=True)
+    stats = process(TMP_DIR, MEDIA_DIR)
+
+    saved_mb    = (stats['original_bytes'] - stats['optimiert_bytes']) / 1_000_000
+    original_mb = stats['original_bytes'] / 1_000_000
+    optimiert_mb = stats['optimiert_bytes'] / 1_000_000
+
+    print(f'\nErgebnis:')
+    print(f'  {stats["saisons"]} Spielzeiten, {stats["produktionen"]} Produktionen')
     if stats['uebersprungen']:
-        print(f"  {stats['uebersprungen']} Produktionen übersprungen (excluded_folders.txt)")
-    print(f"  {stats['kopiert']} Bilder kopiert")
-    print(f"  {stats['hochformat']} Hochformat-Bilder ignoriert")
+        print(f'  {stats["uebersprungen"]} Produktionen übersprungen')
+    print(f'  {stats["kopiert"]} Bilder kopiert und optimiert')
+    print(f'  Größe: {original_mb:.0f} MB → {optimiert_mb:.0f} MB '
+          f'(−{saved_mb:.0f} MB gespart)')
+    print(f'  {stats["hochformat"]} Hochformat-Bilder ignoriert')
+    if stats['duplikate']:
+        print(f'  {stats["duplikate"]} Duplikate gefunden (in quality_scores.json markiert)')
+    if stats['flagged']:
+        print(f'  {stats["flagged"]} Bilder zur Prüfung markiert (⚠ in Kuration sichtbar)')
     if stats['konflikte']:
-        print(f"  {stats['konflikte']} Namenskonflikte umbenannt")
+        print(f'  {stats["konflikte"]} Namenskonflikte umbenannt')
 
 
 if __name__ == '__main__':

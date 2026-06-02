@@ -192,6 +192,18 @@ def get_all_image_files(folder: Path) -> list:
     return sorted(f for f in folder.rglob('*') if f.suffix.lower() in IMAGE_EXTS)
 
 
+def load_quality_scores(folder: Path) -> dict:
+    """Lädt quality_scores.json aus einem Produktionsordner (vom Server via Syncthing)."""
+    score_file = folder / 'quality_scores.json'
+    if not score_file.exists():
+        return {}
+    try:
+        import json
+        return json.loads(score_file.read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+
+
 def get_grundstock_images() -> list:
     """Alle Grundstock-Bilder aus BASIS_DIR."""
     if not BASIS_DIR.exists():
@@ -397,11 +409,12 @@ class BildToggle(BoxLayout):
     """Einzelbild-Thumbnail mit Ausschluss- und Löschen-Button."""
 
     def __init__(self, img_path: Path, excluded: bool, marked_delete: bool,
-                 on_toggle, on_delete_toggle, **kwargs):
+                 on_toggle, on_delete_toggle, quality_info=None, **kwargs):
         super().__init__(orientation='vertical', padding=2, spacing=2, **kwargs)
         w, h = kuration_thumb_size()
+        quality_row = 20 if (quality_info and quality_info.get('flagged')) else 0
         self.size_hint = (None, None)
-        self.size = (w, h + 52)
+        self.size = (w, h + 52 + quality_row)
         self._excluded = excluded
         self._marked_delete = marked_delete
         self._on_toggle = on_toggle
@@ -432,6 +445,15 @@ class BildToggle(BoxLayout):
         )
         self._btn_del.bind(on_press=self._toggle_del)
         self.add_widget(self._btn_del)
+
+        # Qualitäts-Badge (vom Server berechnet)
+        if quality_info and quality_info.get('flagged'):
+            reason = quality_info.get('reason', '⚠')
+            self.add_widget(Label(
+                text=f'⚠ {reason}',
+                size_hint=(1, None), height=20, font_size='10sp',
+                color=(1, 0.75, 0, 1),
+            ))
 
     def _toggle_excl(self, *args):
         self._excluded = not self._excluded
@@ -796,11 +818,15 @@ class KurationBilderScreen(Screen):
         self._prod_path = None
         self._excluded = set()
         self._to_delete = set()
+        self._scores = {}
+        self._show_flagged_only = False
 
     def load(self, prod_path: Path):
         self._prod_path = prod_path
         self._excluded = load_excluded(prod_path) - {'*'}
         self._to_delete = set()
+        self._scores = load_quality_scores(prod_path)
+        self._show_flagged_only = False
         self._build()
 
     def _build(self):
@@ -817,29 +843,47 @@ class KurationBilderScreen(Screen):
         ))
 
         all_images = get_all_image_files(self._prod_path)
-        n_del = len(self._to_delete)
+        n_flagged = sum(1 for f in all_images if self._scores.get(f.name, {}).get('flagged'))
+        n_del  = len(self._to_delete)
         n_excl = len(self._excluded - self._to_delete)
-        bar = BoxLayout(size_hint=(1, None), height=48, spacing=12, padding=(GRID_PADDING, 4))
+
+        bar = BoxLayout(size_hint=(1, None), height=48, spacing=8, padding=(GRID_PADDING, 4))
         bar.add_widget(Label(
-            text=f'{len(all_images) - n_excl - n_del} eingeschlossen  '
-                 f'· {n_excl} ausgeblendet  · {n_del} zum Löschen',
-            font_size='14sp', size_hint=(1, 1),
+            text=f'{len(all_images) - n_excl - n_del} ein  '
+                 f'· {n_excl} aus  · {n_del} löschen'
+                 + (f'  · ⚠ {n_flagged}' if n_flagged else ''),
+            font_size='13sp', size_hint=(1, 1),
         ))
-        btn_alle  = Button(text='Alle ein',  size_hint=(None, 1), width=130, font_size='13sp')
-        btn_keine = Button(text='Alle aus',  size_hint=(None, 1), width=130, font_size='13sp')
+        btn_alle  = Button(text='Alle ein', size_hint=(None, 1), width=110, font_size='12sp')
+        btn_keine = Button(text='Alle aus', size_hint=(None, 1), width=110, font_size='12sp')
         btn_alle.bind(on_press=lambda *a: self._bulk(include=True))
         btn_keine.bind(on_press=lambda *a: self._bulk(include=False))
         bar.add_widget(btn_alle)
         bar.add_widget(btn_keine)
+
+        if n_flagged:
+            lbl = '⚠ Nur markierte' if not self._show_flagged_only else '⚠ Alle zeigen'
+            btn_flag = Button(text=lbl, size_hint=(None, 1), width=170, font_size='12sp',
+                              background_color=(0.6, 0.5, 0.1, 1))
+            btn_flag.bind(on_press=self._toggle_flagged_filter)
+            bar.add_widget(btn_flag)
+
         root.add_widget(bar)
 
         scroll = ScrollView()
         grid = make_grid(KURATION_COLS)
-        for img_file in all_images:
+
+        display_images = all_images
+        if self._show_flagged_only:
+            display_images = [f for f in all_images
+                              if self._scores.get(f.name, {}).get('flagged')]
+
+        for img_file in display_images:
             grid.add_widget(BildToggle(
                 img_path=img_file,
                 excluded=img_file.name in self._excluded,
                 marked_delete=img_file.name in self._to_delete,
+                quality_info=self._scores.get(img_file.name),
                 on_toggle=lambda state, f=img_file: self._on_toggle(f, state),
                 on_delete_toggle=lambda state, f=img_file: self._on_delete(f, state),
             ))
@@ -858,6 +902,10 @@ class KurationBilderScreen(Screen):
             self._to_delete.add(img_file.name)
         else:
             self._to_delete.discard(img_file.name)
+
+    def _toggle_flagged_filter(self, *args):
+        self._show_flagged_only = not self._show_flagged_only
+        self._build()
 
     def _bulk(self, include: bool):
         if include:
