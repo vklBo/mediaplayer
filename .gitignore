@@ -2,6 +2,9 @@
 .project
 .pydevproject
 
+# Lokale Sync-Konfiguration (enthält eure Ordnernamen, nicht ins Repo)
+excluded_folders.txt
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
