@@ -53,12 +53,13 @@ apt-get install -y \
     nfs-kernel-server \
     python3-pip \
     python3-opencv \
+    ffmpeg \
     wakeonlan \
     curl
 
-# Python-Bibliotheken
-pip3 install --break-system-packages pillow imagehash 2>/dev/null || \
-pip3 install pillow imagehash
+# Python-Bibliotheken (Mediaplayer + QLab-Kollektor + Web-UI)
+pip3 install --break-system-packages pillow imagehash flask 2>/dev/null || \
+pip3 install pillow imagehash flask
 
 echo "      ✓ Pakete installiert"
 
@@ -79,6 +80,14 @@ chmod 755 /srv/basismedien
 
 echo "      ✓ $MEDIA_DIR angelegt"
 echo "      ✓ /srv/basismedien angelegt"
+
+# QLab-Backup und Medienbibliothek
+mkdir -p /srv/qlab_backup
+mkdir -p /srv/qlab_media
+chown "$TAF_USER:$TAF_USER" /srv/qlab_backup /srv/qlab_media
+chmod 755 /srv/qlab_backup /srv/qlab_media
+echo "      ✓ /srv/qlab_backup angelegt  (Syncthing: vom Mac empfangen)"
+echo "      ✓ /srv/qlab_media angelegt   (aufgeräumte Bibliothek)"
 
 # ---------------------------------------------------------------------------
 # 3. NFS exportieren (optional – für kabelgebundene Geräte im Netz)
@@ -202,6 +211,28 @@ echo "      ✓ Sync-Service aktiviert (startet nach jedem Boot, niedrige Priori
 echo "      → Log: /var/log/taf_sync.log"
 echo "      → Manuell starten: sudo systemctl start taf-sync.service"
 
+# QLab Web-UI als Service
+cat > /etc/systemd/system/taf-qlab-web.service <<SERVICE
+[Unit]
+Description=TaF QLab Medienbibliothek Web-UI
+After=network.target
+
+[Service]
+Type=simple
+User=$TAF_USER
+ExecStart=python3 $SYNC_SCRIPT_DIR/qlab_web.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl daemon-reload
+systemctl enable taf-qlab-web.service
+systemctl start  taf-qlab-web.service
+echo "      ✓ QLab Web-UI aktiviert (http://$(hostname -I | awk '{print $1}'):5000)"
+
 # ---------------------------------------------------------------------------
 # Zusammenfassung
 # ---------------------------------------------------------------------------
@@ -226,8 +257,9 @@ echo ""
 echo "  3. Syncthing mit Pis koppeln:"
 echo "     http://$SERVER_IP:8384"
 echo "     → Gerät hinzufügen → Pi-Geräte-ID eingeben"
-echo "     → Ordner $MEDIA_DIR teilen        (Typ: Nur senden)"
-echo "     → Ordner /srv/basismedien teilen  (Typ: Senden & Empfangen)"
+echo "     → Ordner $MEDIA_DIR teilen          (Typ: Nur senden)"
+echo "     → Ordner /srv/basismedien teilen    (Typ: Senden & Empfangen)"
+echo "     → Ordner /srv/qlab_backup teilen    (Typ: Nur empfangen, vom Mac)"
 echo ""
 echo "  4. Ersten Sync manuell starten:"
 echo "     python3 $SYNC_SCRIPT_DIR/sync_onedrive.py --list-folders"
