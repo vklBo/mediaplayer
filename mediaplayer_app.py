@@ -62,9 +62,9 @@ BASIS_DIR     = Path.home() / 'basismedien'
 THUMB_DIR     = Path.home() / '.thumbs'
 USB_BASE_PATH = Path('/media/taf')
 
-KURATION_PIN        = '1234'  # PIN für den Kurationsmodus – hier ändern
+KURATION_PIN        = '1313'  # PIN für den Kurationsmodus – hier ändern
 SLIDESHOW_INTERVAL  = 5       # Sekunden pro Bild
-GRUNDSTOCK_INTERVAL = 5       # Jedes N-te Bild in der Diashow ist ein Grundstock-Bild
+GRUNDSTOCK_INTERVAL = 15       # Jedes N-te Bild in der Diashow ist ein Grundstock-Bild
                                # (0 = Grundstock deaktiviert)
 THUMB_SIZE         = (500, 340)
 KURATION_THUMB_SIZE = (200, 150)
