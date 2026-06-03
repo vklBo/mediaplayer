@@ -147,9 +147,10 @@ echo "      ✓ WoL-Service aktiviert"
 
 echo "[4/5] Syncthing einrichten..."
 
-# Media-Verzeichnis anlegen
+# Verzeichnisse anlegen
 mkdir -p "/home/$TAF_USER/media"
-chown "$TAF_USER:$TAF_USER" "/home/$TAF_USER/media"
+mkdir -p "/home/$TAF_USER/medienbasis"
+chown "$TAF_USER:$TAF_USER" "/home/$TAF_USER/media" "/home/$TAF_USER/medienbasis"
 
 systemctl enable "syncthing@$TAF_USER"
 systemctl start  "syncthing@$TAF_USER"
@@ -159,7 +160,9 @@ PI_IP=$(hostname -I | awk '{print $1}')
 echo "      ✓ Syncthing läuft"
 echo "      → Web-UI: http://$PI_IP:8384"
 echo "      → Geräte-ID notieren, auf Server eintragen"
-echo "      → Server teilt /srv/media → Pi empfängt unter ~/media"
+echo "      → Ordner 1: ~/media        ← vom Server (Nur empfangen)"
+echo "      → Ordner 2: ~/medienbasis  ↔ bidirektional mit Server (Senden & Empfangen)"
+echo "         (USB-Stick mit medienbasis/ → wird automatisch an alle Pis verteilt)"
 
 # ---------------------------------------------------------------------------
 # 5. mediaplayer-Service einrichten

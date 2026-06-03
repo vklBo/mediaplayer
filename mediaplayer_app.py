@@ -394,7 +394,8 @@ def usb_monitor_loop(app: 'MediaplayerApp'):
         print(f'USB gefunden: {usb_path}')
         basis_usb = usb_path / 'medienbasis'
         if basis_usb.exists():
-            _clear_dir(BASIS_DIR)
+            # Merge statt Replace: vorhandene Dateien bleiben erhalten.
+            # Syncthing verteilt neue Dateien automatisch an Server + andere Pis.
             _copy_flat(basis_usb, BASIS_DIR)
         skripte_usb = usb_path / 'skripte'
         if skripte_usb.exists():
