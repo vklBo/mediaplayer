@@ -26,6 +26,8 @@ import threading
 import shutil
 import time
 import subprocess
+import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from PIL import Image as PILImage
 
@@ -70,6 +72,72 @@ KURATION_COLS      = 6       # Spalten im Bild-Kurationsmodus
 
 IMAGE_EXTS   = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif'}
 ALLOWED_EXTS = IMAGE_EXTS | {'.mp4', '.avi', '.mkv', '.mov'}
+
+# ---------------------------------------------------------------------------
+# Syncthing-Status
+# ---------------------------------------------------------------------------
+
+def _syncthing_api_key() -> str:
+    """Liest den Syncthing-API-Key aus der Konfigurationsdatei."""
+    config = Path.home() / '.config' / 'syncthing' / 'config.xml'
+    if not config.exists():
+        return ''
+    try:
+        tree = ET.parse(config)
+        key = tree.find('.//apikey')
+        return key.text.strip() if key is not None and key.text else ''
+    except Exception:
+        return ''
+
+
+def syncthing_completion() -> float | None:
+    """
+    Gibt den Syncthing-Fortschritt zurück (0–100) oder None wenn nicht erreichbar.
+    100 = vollständig synchronisiert.
+    """
+    api_key = _syncthing_api_key()
+    if not api_key:
+        return None
+    try:
+        req = urllib.request.Request(
+            'http://localhost:8384/rest/db/completion',
+            headers={'X-API-Key': api_key},
+        )
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            import json
+            data = json.loads(resp.read())
+            return float(data.get('completion', 100))
+    except Exception:
+        return None
+
+
+def syncthing_monitor_loop(app: 'MediaplayerApp'):
+    """
+    Hintergrund-Thread: prüft alle 15 Sekunden ob Syncthing fertig ist.
+    Aktualisiert den Sync-Status-Label in der App und löst
+    einen UI-Refresh aus sobald der Sync abgeschlossen ist.
+    """
+    was_syncing = False
+    while True:
+        time.sleep(15)
+        pct = syncthing_completion()
+        if pct is None:
+            # Syncthing nicht erreichbar (noch nicht gestartet o.ä.)
+            Clock.schedule_once(lambda dt: app.set_sync_status(''))
+            continue
+
+        if pct < 100:
+            was_syncing = True
+            Clock.schedule_once(
+                lambda dt, p=pct: app.set_sync_status(f'🔄 Sync {p:.0f} %')
+            )
+        else:
+            Clock.schedule_once(lambda dt: app.set_sync_status(''))
+            if was_syncing:
+                # Sync gerade abgeschlossen → UI neu laden
+                was_syncing = False
+                invalidate_thumbnails()
+                Clock.schedule_once(lambda dt: app.refresh_ui())
 EXCLUDED_FILE = 'excluded.txt'
 
 # Ordner und Dateien, die beim USB-Kopieren übersprungen werden.
@@ -590,6 +658,13 @@ class SpielsaisonScreen(Screen):
 
         header = BoxLayout(size_hint=(1, None), height=70)
         header.add_widget(Label(text='Spielzeiten', font_size='30sp'))
+        app = App.get_running_app()
+        app._sync_label = Label(
+            text=getattr(getattr(app, '_sync_label', None), 'text', ''),
+            font_size='15sp', size_hint=(None, 1), width=180,
+            color=(0.4, 0.8, 1, 1),
+        )
+        header.add_widget(app._sync_label)
         btn_kuration = Button(text='✏ Kuration', size_hint=(None, 1), width=160, font_size='18sp')
         btn_kuration.bind(on_press=self._enter_kuration)
         header.add_widget(btn_kuration)
@@ -984,11 +1059,17 @@ class MediaplayerApp(App):
         return sm
 
     def on_start(self):
-        t = threading.Thread(target=usb_monitor_loop, args=(self,), daemon=True)
-        t.start()
+        self._sync_label = None
+        threading.Thread(target=usb_monitor_loop,       args=(self,), daemon=True).start()
+        threading.Thread(target=syncthing_monitor_loop, args=(self,), daemon=True).start()
+
+    def set_sync_status(self, text: str):
+        """Setzt den Sync-Status-Text im Header (wird vom Monitor-Thread via Clock aufgerufen)."""
+        if self._sync_label is not None:
+            self._sync_label.text = text
 
     def refresh_ui(self):
-        """Wird vom USB-Monitor-Thread via Clock aufgerufen."""
+        """Wird vom USB-Monitor- oder Syncthing-Monitor-Thread via Clock aufgerufen."""
         sm = self.root
         sm.get_screen('spielsaison')._build()
         if sm.current not in ('spielsaison',):
