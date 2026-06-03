@@ -32,7 +32,7 @@ from PIL import Image as PILImage
 # ---------------------------------------------------------------------------
 
 RCLONE_REMOTE  = 'onedrive'          # rclone-Konfigurationsname
-RCLONE_PATH    = 'Theater/Fotos'     # Pfad in OneDrive/SharePoint
+RCLONE_PATH    = 'Fotos'             # Pfad in OneDrive/SharePoint
 MEDIA_DIR      = Path('/srv/media')  # Ziel (wird per Syncthing verteilt)
 STAGING_DIR    = Path('/srv/media_staging')  # Zwischenstufe – wird erst bei Erfolg umgeschaltet
 TMP_DIR        = Path.home() / '.media_sync_tmp'
