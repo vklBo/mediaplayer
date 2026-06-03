@@ -48,6 +48,7 @@ echo ""
 echo "[1/6] Pakete installieren..."
 apt-get update -qq
 apt-get install -y \
+    openssh-server \
     rclone \
     syncthing \
     nfs-kernel-server \
@@ -56,6 +57,11 @@ apt-get install -y \
     ffmpeg \
     wakeonlan \
     curl
+
+# SSH aktivieren und starten
+systemctl enable ssh
+systemctl start  ssh
+echo "      ✓ SSH aktiviert (Port 22)"
 
 # Python-Bibliotheken (Mediaplayer + QLab-Kollektor + Web-UI)
 pip3 install --break-system-packages pillow imagehash flask 2>/dev/null || \

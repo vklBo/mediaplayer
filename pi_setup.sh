@@ -35,12 +35,18 @@ echo ""
 echo "[1/5] Pakete installieren..."
 apt-get update -qq
 apt-get install -y \
+    openssh-server \
     syncthing \
     wakeonlan \
     python3-pip \
     libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev libsdl2-mixer-dev \
     libmtdev-dev libgl1-mesa-dev \
     feh lshw
+
+# SSH aktivieren und starten
+systemctl enable ssh
+systemctl start  ssh
+echo "      ✓ SSH aktiviert (Port 22)"
 
 pip3 install --break-system-packages kivy[base] pillow 2>/dev/null || \
 pip3 install kivy[base] pillow
