@@ -221,23 +221,77 @@ def detect_duplicates(images: list) -> dict:
     return dupes
 
 # ---------------------------------------------------------------------------
-# Verarbeitung: Flatten + Optimieren + Analysieren
+# Verarbeitung: Struktur erhalten + Optimieren + Analysieren
 # ---------------------------------------------------------------------------
 
-def collect_images(folder: Path):
-    """Alle Querformat-Bilder aus folder (beliebige Tiefe)."""
-    result, skipped_portrait = [], 0
-    for f in sorted(folder.rglob('*')):
-        if f.suffix.lower() not in IMAGE_EXTS:
-            continue
-        if is_portrait(f):
-            skipped_portrait += 1
-            continue
-        result.append(f)
-    return result, skipped_portrait
+def _process_folder(src: Path, dst: Path, stats: dict, dry_run: bool):
+    """
+    Verarbeitet einen Ordner rekursiv und erhält die Unterordner-Struktur.
+    Jeder Ordner bekommt seine eigene quality_scores.json.
+    Bilder werden pro Ordner analysiert (keine Duplikat-Erkennung über Ordner hinweg).
+    """
+    # Unterordner zuerst rekursiv verarbeiten
+    for sub in sorted(f for f in src.iterdir() if f.is_dir()):
+        dst_sub = dst / sub.name
+        if not dry_run:
+            dst_sub.mkdir(parents=True, exist_ok=True)
+        _process_folder(sub, dst_sub, stats, dry_run)
+
+    # Bilder direkt in diesem Ordner (nicht rekursiv)
+    images_all = [f for f in sorted(src.iterdir())
+                  if f.is_file() and f.suffix.lower() in IMAGE_EXTS]
+    portrait   = [f for f in images_all if is_portrait(f)]
+    images     = [f for f in images_all if not is_portrait(f)]
+    stats['hochformat'] += len(portrait)
+
+    if dry_run:
+        if images or portrait:
+            print(f'    {src.name}: {len(images)} Bilder, {len(portrait)} Hochformat ignoriert')
+        return
+
+    if not images:
+        return
+
+    # excluded.txt + quality_scores.json aus Zielordner erhalten
+    excl_path  = dst / 'excluded.txt'
+    score_path = dst / 'quality_scores.json'
+    saved_excl   = excl_path.read_text('utf-8')  if excl_path.exists()  else None
+    saved_scores = json.loads(score_path.read_text('utf-8')) if score_path.exists() else {}
+
+    dupes = detect_duplicates(images)
+    stats['duplikate'] += len(dupes)
+    quality_scores = {}
+
+    for img in images:
+        dst_img = dst / img.name
+        stats['original_bytes'] += img.stat().st_size
+        try:
+            stats['optimiert_bytes'] += optimize_image(img, dst_img)
+        except Exception as e:
+            shutil.copy2(img, dst_img)
+            stats['optimiert_bytes'] += dst_img.stat().st_size
+            print(f'    Optimierung fehlgeschlagen ({img.name}): {e}')
+        stats['kopiert'] += 1
+
+        if img.name not in saved_scores:
+            q = analyze_quality(dst_img)
+            if img.name in dupes:
+                q['flagged'] = True
+                q['reason'] = f'Duplikat von {dupes[img.name]}'
+        else:
+            q = saved_scores[img.name]
+        quality_scores[img.name] = q
+        if q.get('flagged'):
+            stats['flagged'] += 1
+
+    score_path.write_text(json.dumps(quality_scores, ensure_ascii=False, indent=2), 'utf-8')
+    if saved_excl is not None:
+        excl_path.write_text(saved_excl, 'utf-8')
 
 
 def process(src: Path, dst: Path, dry_run: bool = False) -> dict:
+    """Liest Saison/Produktion-Struktur aus src, schreibt nach dst.
+    Unterordner unterhalb der Produktionsebene werden erhalten."""
     excluded = load_excluded_folders()
     stats = {
         'saisons': 0, 'produktionen': 0, 'kopiert': 0,
@@ -262,71 +316,14 @@ def process(src: Path, dst: Path, dry_run: bool = False) -> dict:
                 continue
 
             stats['produktionen'] += 1
-            images, portrait_count = collect_images(prod_dir)
-            stats['hochformat'] += portrait_count
-
             if dry_run:
-                print(f'  SYNC  {saison_dir.name}/{prod_dir.name}: '
-                      f'{len(images)} Bilder, {portrait_count} Hochformat ignoriert')
-                continue
+                print(f'  SYNC  {saison_dir.name}/{prod_dir.name}:')
 
             target_prod = dst / saison_dir.name / prod_dir.name
-            target_prod.mkdir(parents=True, exist_ok=True)
+            if not dry_run:
+                target_prod.mkdir(parents=True, exist_ok=True)
 
-            # excluded.txt und quality_scores.json bewahren
-            excl_path  = target_prod / 'excluded.txt'
-            score_path = target_prod / 'quality_scores.json'
-            saved_excl   = excl_path.read_text('utf-8')  if excl_path.exists()  else None
-            saved_scores = json.loads(score_path.read_text('utf-8')) if score_path.exists() else {}
-
-            # Duplikate erkennen
-            dupes = detect_duplicates(images)
-            stats['duplikate'] += len(dupes)
-
-            # Bilder kopieren + optimieren + analysieren
-            quality_scores = {}
-            seen_names: dict = {}
-
-            for img in images:
-                name = img.name
-                if name in seen_names:
-                    rel  = img.relative_to(prod_dir)
-                    name = '__'.join(rel.parts)
-                    stats['konflikte'] += 1
-                seen_names[name] = img
-
-                dst_img = target_prod / name
-                stats['original_bytes'] += img.stat().st_size
-                try:
-                    size = optimize_image(img, dst_img)
-                    stats['optimiert_bytes'] += size
-                except Exception as e:
-                    shutil.copy2(img, dst_img)
-                    stats['optimiert_bytes'] += dst_img.stat().st_size
-                    print(f'    Optimierung fehlgeschlagen ({name}): {e}')
-
-                stats['kopiert'] += 1
-
-                # Qualitätsanalyse (nur wenn noch kein Score vorhanden)
-                if name not in saved_scores:
-                    q = analyze_quality(dst_img)
-                    if img.name in dupes:
-                        q['flagged'] = True
-                        q['reason'] = f'Duplikat von {dupes[img.name]}'
-                else:
-                    q = saved_scores[name]
-                quality_scores[name] = q
-                if q.get('flagged'):
-                    stats['flagged'] += 1
-
-            # Scores speichern
-            score_path.write_text(
-                json.dumps(quality_scores, ensure_ascii=False, indent=2),
-                encoding='utf-8',
-            )
-            # excluded.txt wiederherstellen
-            if saved_excl is not None:
-                excl_path.write_text(saved_excl, encoding='utf-8')
+            _process_folder(prod_dir, target_prod, stats, dry_run)
 
     return stats
 

@@ -272,13 +272,25 @@ def load_quality_scores(folder: Path) -> dict:
         return {}
 
 
-def get_folder_quality_summary(prod_path: Path) -> tuple:
-    """Gibt (gesamt, flagged) zurück für einen Produktionsordner."""
-    scores = load_quality_scores(prod_path)
-    images = get_all_image_files(prod_path)
-    total   = len(images)
-    flagged = sum(1 for f in images if scores.get(f.name, {}).get('flagged'))
+def get_folder_quality_summary(folder: Path) -> tuple:
+    """Gibt (gesamt, flagged) für einen Ordner zurück – rekursiv über Unterordner."""
+    scores  = load_quality_scores(folder)
+    # Direkte Bilder in diesem Ordner
+    direct  = [f for f in folder.iterdir() if f.is_file() and f.suffix.lower() in IMAGE_EXTS]
+    total   = len(direct)
+    flagged = sum(1 for f in direct if scores.get(f.name, {}).get('flagged'))
+    # Unterordner rekursiv
+    for sub in folder.iterdir():
+        if sub.is_dir():
+            sub_total, sub_flagged = get_folder_quality_summary(sub)
+            total   += sub_total
+            flagged += sub_flagged
     return total, flagged
+
+
+def has_subfolders(folder: Path) -> bool:
+    """True wenn der Ordner Unterverzeichnisse enthält."""
+    return any(f.is_dir() for f in folder.iterdir())
 
 
 def get_grundstock_images() -> list:
@@ -331,11 +343,31 @@ def _is_usb_skip(path: Path) -> bool:
 
 
 def _copy_flat(src: Path, dst: Path):
-    for item in src.rglob('*'):
-        if any(_is_usb_skip(p) for p in item.parents) or _is_usb_skip(item):
+    """Kopiert Mediendateien flach (nur eine Ebene, für medienbasis/skripte)."""
+    for item in src.iterdir():
+        if _is_usb_skip(item):
             continue
         if item.is_file() and item.suffix.lower() in ALLOWED_EXTS:
             shutil.copy2(item, dst / item.name)
+
+
+def _copy_recursive(src: Path, dst: Path):
+    """Kopiert Mediendateien rekursiv und erhält Unterordner-Struktur.
+    Namenskonflikte werden durch Umbenennen aufgelöst (nicht überschrieben)."""
+    for item in src.iterdir():
+        if _is_usb_skip(item):
+            continue
+        if item.is_dir():
+            sub_dst = dst / item.name
+            sub_dst.mkdir(exist_ok=True)
+            _copy_recursive(item, sub_dst)
+        elif item.is_file() and item.suffix.lower() in ALLOWED_EXTS:
+            target = dst / item.name
+            if target.exists():
+                # Namenskonflikt: Suffix ergänzen
+                stem, ext = item.stem, item.suffix
+                target = dst / f'{stem}__{item.parent.name}{ext}'
+            shutil.copy2(item, target)
 
 
 def _copy_structured(src: Path, dst: Path):
@@ -350,7 +382,7 @@ def _copy_structured(src: Path, dst: Path):
             if produktion.is_dir() and not _is_usb_skip(produktion):
                 target_prod = target_saison / produktion.name
                 target_prod.mkdir(exist_ok=True)
-                _copy_flat(produktion, target_prod)
+                _copy_recursive(produktion, target_prod)  # Unterordner erhalten
 
 
 def usb_monitor_loop(app: 'MediaplayerApp'):
@@ -913,8 +945,14 @@ class KurationProdScreen(Screen):
         self._build()
 
     def _drill(self, prod_path: Path):
-        self.manager.get_screen('kuration_bilder').load(prod_path)
-        _go_to(self.manager, 'kuration_bilder')
+        if has_subfolders(prod_path):
+            self.manager.get_screen('kuration_subordner').load(
+                prod_path, back_screen='kuration_prod'
+            )
+            _go_to(self.manager, 'kuration_subordner')
+        else:
+            self.manager.get_screen('kuration_bilder').load(prod_path)
+            _go_to(self.manager, 'kuration_bilder')
 
 
 class KurationBilderScreen(Screen):
@@ -1041,6 +1079,67 @@ class KurationBilderScreen(Screen):
         _go_to(self.manager, 'kuration_prod', 'right')
 
 
+class KurationSubordnerScreen(Screen):
+    """Kuration: Unterordner einer Produktion – ein-/ausschließen oder in Bilder gehen."""
+
+    def load(self, folder: Path, back_screen: str = 'kuration_prod'):
+        self._folder = folder
+        self._back_screen = back_screen
+        self._build()
+
+    def _build(self):
+        self.clear_widgets()
+        root = BoxLayout(orientation='vertical')
+        root.add_widget(make_header(
+            f'Kuration: {self._folder.name}',
+            '← Zurück', self._back_screen, self.manager,
+        ))
+        root.add_widget(Label(
+            text='Unterordner: "Bilder →" kurationieren  |  "✗" ganzen Unterordner ausschließen',
+            size_hint=(1, None), height=34, font_size='13sp',
+            color=(0.8, 0.8, 0.4, 1),
+        ))
+
+        scroll = ScrollView()
+        grid = make_grid(TILE_COLS)
+
+        for sub in sorted(f for f in self._folder.iterdir() if f.is_dir()):
+            grid.add_widget(KurationOrdnerKachel(
+                prod_path=sub,
+                excluded=is_folder_excluded(sub),
+                on_drill=lambda s=sub: self._drill(s),
+                on_toggle=lambda s=sub: self._toggle(s),
+                on_delete=lambda s=sub: self._delete(s),
+            ))
+
+        scroll.add_widget(grid)
+        root.add_widget(scroll)
+        self.add_widget(root)
+
+    def _toggle(self, sub: Path):
+        toggle_folder_excluded(sub)
+        self._build()
+
+    def _drill(self, sub: Path):
+        if has_subfolders(sub):
+            # Noch eine Ebene tiefer (rekursiv selber Screen)
+            self.manager.get_screen('kuration_subordner').load(
+                sub, back_screen='kuration_subordner'
+            )
+        else:
+            self.manager.get_screen('kuration_bilder').load(sub)
+            _go_to(self.manager, 'kuration_bilder')
+
+    def _delete(self, sub: Path):
+        PinPopup(on_success=lambda: self._do_delete(sub)).open()
+
+    def _do_delete(self, sub: Path):
+        shutil.rmtree(sub, ignore_errors=True)
+        thumb = THUMB_DIR / f"{sub.parent.name}__{sub.name}.jpg"
+        thumb.unlink(missing_ok=True)
+        self._build()
+
+
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
@@ -1055,6 +1154,7 @@ class MediaplayerApp(App):
         sm.add_widget(SlideshowScreen(name='slideshow'))
         sm.add_widget(KurationSaisonScreen(name='kuration_saison'))
         sm.add_widget(KurationProdScreen(name='kuration_prod'))
+        sm.add_widget(KurationSubordnerScreen(name='kuration_subordner'))
         sm.add_widget(KurationBilderScreen(name='kuration_bilder'))
         return sm
 
