@@ -13,25 +13,33 @@ OneDrive / SharePoint
         │  rclone (beim Serverstart, niedrige Priorität)
         ▼
 Dell Optiplex (Medienserver, kabelgebunden)
-  /srv/media/
-    2024-25/
-      Faust/          ← optimiert auf 1920×1080, EXIF entfernt
-      Hamlet/         ← quality_scores.json (Schärfe, Rauschen, Duplikate)
+  /srv/media/          ← Produktionsfotos (Syncthing → Pis)
+  /srv/basismedien/    ← Sponsor-/Logos   (Syncthing ↔ Pis + Mac)
+  /srv/qlab_backup/    ← QLab-Projekte    (Syncthing ← Mac)
+  /srv/qlab_media/     ← Medienbibliothek (Web-UI Port 5000)
         │
-        │  Syncthing (WLAN, hat Vorrang vor OneDrive-Sync)
-        ▼
-Raspberry Pi 4 (Touch-Kiosk)         Raspberry Pi 4 (Touch-Kiosk)
-  ~/media/  (lokale Kopie)             ~/media/  (lokale Kopie)
-  mediaplayer_app.py                   mediaplayer_app.py
+        │  Syncthing (WLAN)
+        ├──────────────────────────────────────┐
+        ▼                                      ▼
+Raspberry Pi 4 (Touch-Kiosk)           MacBook (QLab)
+  ~/media/      ← vom Server              ~/Documents/QLab → Server
+  ~/basismedien ↔ bidirektional           ~/basismedien    ↔ bidirektional
+  mediaplayer_app.py                      mac_wol.sh (weckt Server)
 ```
 
-**Ablauf beim Start:**
+**Ablauf beim Start (Pis):**
 1. Pi sendet Wake-on-LAN an den Server
 2. Pi wartet bis Server erreichbar ist (max. 60 Sek.)
 3. Syncthing überträgt neue/geänderte Bilder an den Pi (WLAN)
 4. Server synchronisiert mit OneDrive – mit niedriger CPU/IO-Priorität,
    damit Syncthing-Übertragungen an Pis Vorrang haben
-5. Watchdog prüft alle 5 Min: Pis erreichbar? Sync fertig? Syncthing fertig? → ggf. Shutdown
+5. Watchdog prüft alle 5 Min: Pis/Mac erreichbar? Sync fertig? → ggf. Shutdown
+
+**Ablauf beim Start (MacBook):**
+1. launchd startet `mac_wol.sh` beim Login und alle 5 Minuten
+2. Script prüft ob Server erreichbar → falls nicht: sendet WoL-Paket
+3. Syncthing synchronisiert QLab-Projekte automatisch zum Server
+4. Solange MacBook erreichbar: Server bleibt aktiv (Watchdog)
 
 ---
 
@@ -41,7 +49,8 @@ Raspberry Pi 4 (Touch-Kiosk)         Raspberry Pi 4 (Touch-Kiosk)
 |-------|---------------|
 | Dell Optiplex | Ubuntu/Debian, kabelgebunden am UDM-SE, WoL im BIOS aktiviert |
 | Raspberry Pi 4 | Pi OS Lite 64-bit, WLAN, Touch-Display |
-| Netzwerk | Pis und Server im gleichen Subnetz (WLAN + LAN, WoL-Broadcast muss passieren) |
+| MacBook | macOS, WLAN, QLab 5 |
+| Netzwerk | Alle Geräte im gleichen Subnetz (WoL-Broadcast muss Grenze passieren) |
 | Cloud | Microsoft 365-Konto mit OneDrive/SharePoint-Zugang |
 
 ---
@@ -79,16 +88,23 @@ RCLONE_REMOTE = 'onedrive'
 RCLONE_PATH   = 'Theater/Fotos'   # tatsächlichen Pfad in OneDrive eintragen
 ```
 
-### 4. Pi-IPs in Watchdog eintragen
+### 4. Geräte-IPs in Watchdog eintragen
+
+Der Watchdog fährt den Server herunter wenn **keines** der eingetragenen Geräte
+mehr erreichbar ist – also wenn weder Pis noch MacBook im Netz sind.
 
 ```bash
 sudo nano /etc/taf/watchdog.conf
 ```
 ```
-192.168.1.102
-192.168.1.105
+192.168.1.102    # Pi 1
+192.168.1.105    # Pi 2
+192.168.1.110    # MacBook (feste IP per DHCP-Reservierung im UDM-SE empfohlen)
 TIMEOUT_MINUTES=15
 ```
+
+> **Tipp:** Hostnamen funktionieren auch, z.B. `macbook.local` – aber feste IPs
+> sind zuverlässiger.
 
 ### 5. Syncthing einrichten
 
@@ -97,7 +113,8 @@ Web-UI öffnen: `http://<SERVER-IP>:8384`
 - **Geräte-ID des Servers notieren** (Aktionen → Identität anzeigen)
 - Für jeden Pi: Gerät hinzufügen → Pi-Geräte-ID eingeben
 - Ordner `/srv/media` mit allen Pis teilen (Typ: **Nur senden**)
-- Ordner `/srv/basismedien` mit allen Pis teilen (Typ: **Senden & Empfangen**)
+- Ordner `/srv/basismedien` mit Pis + MacBook teilen (Typ: **Senden & Empfangen**)
+- Ordner `/srv/qlab_backup` mit MacBook teilen (Typ: **Nur empfangen**)
 
 ### 6. Ersten Sync durchführen
 
@@ -164,6 +181,103 @@ Web-UI öffnen: `http://<PI-IP>:8384`
 sudo reboot
 journalctl -u taf_service.service -f
 ```
+
+---
+
+## Einrichtung MacBook
+
+### 1. Dateien auf das MacBook kopieren
+
+```bash
+scp mac_wol.sh mac_wol_setup.sh benutzer@macbook.local:~/mediaplayer/
+```
+
+### 2. SERVER_MAC und SERVER_IP eintragen
+
+```bash
+nano ~/mediaplayer/mac_wol.sh
+```
+```bash
+SERVER_MAC="AA:BB:CC:DD:EE:FF"   # MAC-Adresse des Optiplex (ip link show)
+SERVER_IP="192.168.1.100"
+```
+
+### 3. launchd-Agent einrichten
+
+```bash
+bash ~/mediaplayer/mac_wol_setup.sh
+```
+
+Richtet automatisch ein:
+- WoL beim Login
+- WoL alle 5 Minuten (hält Server wach + weckt nach Schlaf)
+- Log: `~/Library/Logs/taf_server_wol.log`
+
+Deinstallieren:
+```bash
+launchctl unload ~/Library/LaunchAgents/de.theateramfluss.server-wol.plist
+rm ~/Library/LaunchAgents/de.theateramfluss.server-wol.plist
+```
+
+### 4. Syncthing einrichten
+
+Syncthing installieren: https://syncthing.net/downloads/ (macOS-App)  
+Web-UI öffnen: `http://localhost:8384`
+
+- **Geräte-ID des MacBook notieren**
+- Diese ID auf dem Server eintragen
+- Geteilten Ordner `/srv/basismedien` akzeptieren (Typ: **Senden & Empfangen**)
+- Eigenen QLab-Ordner hinzufügen (Pfad: `~/Documents/QLab` o.ä., Typ: **Nur senden**)
+  → Server empfängt unter `/srv/qlab_backup/`
+
+### 5. QLab-Pfad in Kollektor eintragen
+
+Sobald der QLab-Ordnerpfad bekannt ist, in `qlab_media_collector.py` anpassen:
+```python
+QLAB_BACKUP_DIR = Path('/srv/qlab_backup')   # bereits korrekt (Server-seitig)
+```
+
+---
+
+## QLab-Medienbibliothek
+
+### Katalog aufbauen (auf dem Server)
+
+```bash
+# Ersten Katalog erstellen
+python3 ~/mediaplayer/qlab_media_collector.py
+
+# Vorschau ohne Kopieren
+python3 ~/mediaplayer/qlab_media_collector.py --dry-run
+
+# Inkrementell aktualisieren (nach neuen QLab-Projekten)
+python3 ~/mediaplayer/qlab_media_collector.py
+
+# Komplett neu aufbauen
+python3 ~/mediaplayer/qlab_media_collector.py --clean
+```
+
+### Webinterface
+
+Läuft automatisch als systemd-Service auf Port 5000:  
+**`http://<SERVER-IP>:5000`**
+
+Features:
+- Volltextsuche über Dateiname, Tags (Title, Comment, Genre), Projekte
+- Filter nach Typ (Audio/Video/Bild) und Kategorie
+- **▶ Play** – Audio direkt im Browser abspielen
+- **↓** – Datei herunterladen
+- Zeigt aus welchen QLab-Projekten eine Datei stammt
+
+### Kategorisierung
+
+| Kategorie | Kriterium | Typischer Inhalt |
+|-----------|-----------|-----------------|
+| `sfx` | Dauer < 5 Sek | Geräusche, Effekte |
+| `stings` | Dauer 5–60 Sek | Übergangsklänge, kurze Musik |
+| `musik_ambience` | Dauer > 60 Sek | Musik, Atmosphäre |
+| `video` | Videodatei | Projektionsmaterial |
+| `bilder` | Bilddatei | Grafiken, Fotos |
 
 ---
 
@@ -280,8 +394,9 @@ NOISE_THRESHOLD  = 9.0         # Rausch-Schwellwert
 
 ### `/etc/taf/watchdog.conf` (Server)
 ```
-192.168.1.102
-192.168.1.105
+192.168.1.102    # Pi 1
+192.168.1.105    # Pi 2
+192.168.1.110    # MacBook
 TIMEOUT_MINUTES=15
 ```
 
@@ -334,8 +449,19 @@ journalctl -u taf-wol.service
 
 **Server fährt nicht herunter**
 → Sync noch aktiv? `ls /tmp/taf_sync_running`  
-→ Pi-IPs in `/etc/taf/watchdog.conf` eingetragen?  
+→ Pi- und MacBook-IPs in `/etc/taf/watchdog.conf` eingetragen?  
 → `journalctl -u taf-watchdog.service -n 20`
+
+**MacBook weckt Server nicht**
+→ `SERVER_MAC` in `mac_wol.sh` korrekt? (`ip link show` auf Server)  
+→ `SERVER_IP` erreichbar? (`ping 192.168.1.100` vom Mac)  
+→ WoL im BIOS des Servers aktiviert? (Power Management)  
+→ Log prüfen: `cat ~/Library/Logs/taf_server_wol.log`
+
+**QLab-Katalog leer**
+→ Syncthing läuft? QLab-Projekte in `/srv/qlab_backup/` vorhanden?  
+→ `python3 qlab_media_collector.py --dry-run` auf dem Server ausführen  
+→ `ffmpeg` installiert? (`ffprobe -version`)
 
 **Syncthing koppelt nicht**
 → Geräte-IDs korrekt eingetragen?  
@@ -346,10 +472,14 @@ journalctl -u taf-wol.service
 
 ## Dateien im Repository
 
-| Datei | Zweck |
-|-------|-------|
-| `mediaplayer_app.py` | Kivy-App für den Pi (Touch-UI, Diashow, Kuration) |
-| `sync_onedrive.py` | Server: OneDrive → /srv/media, Optimierung, Qualitätsanalyse |
-| `server_setup.sh` | Einmalige Einrichtung des Dell Optiplex |
-| `server_watchdog.sh` | Automatischer Shutdown wenn keine Pis aktiv |
-| `pi_setup.sh` | Einmalige Einrichtung eines Raspberry Pi |
+| Datei | Gerät | Zweck |
+|-------|-------|-------|
+| `mediaplayer_app.py` | Pi | Kivy-App: Touch-UI, Diashow, Kuration |
+| `sync_onedrive.py` | Server | OneDrive → /srv/media, Optimierung, Qualitätsanalyse |
+| `qlab_media_collector.py` | Server | QLab-Backup scannen, Katalog aufbauen |
+| `qlab_web.py` | Server | Webinterface Medienbibliothek (Port 5000) |
+| `server_setup.sh` | Server | Einmalige Einrichtung des Dell Optiplex |
+| `server_watchdog.sh` | Server | Automatischer Shutdown wenn keine Geräte aktiv |
+| `pi_setup.sh` | Pi | Einmalige Einrichtung eines Raspberry Pi |
+| `mac_wol.sh` | MacBook | Server per WoL wecken (perl, kein Python nötig) |
+| `mac_wol_setup.sh` | MacBook | launchd-Agent für automatischen WoL einrichten |
