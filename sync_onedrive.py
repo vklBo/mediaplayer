@@ -235,11 +235,15 @@ def _process_folder(src: Path, dst: Path, stats: dict, dry_run: bool, prev: Path
     prev: entsprechender Ordner in der bestehenden Bibliothek (/srv/media),
           aus dem excluded.txt und quality_scores.json übernommen werden.
     """
-    # genre.txt aus der bestehenden Bibliothek übernehmen (Produktionsebene,
-    # zentral per genres.py gepflegt – darf vom Sync nicht verloren gehen)
-    if prev and not dry_run:
-        prev_genre = prev / 'genre.txt'
-        if prev_genre.exists():
+    # genre.txt bestimmen. Vorrang-Regel:
+    #   1. genre.txt aus OneDrive (in der Quelle) → maßgeblich, falls vorhanden
+    #   2. sonst genre.txt aus der bestehenden Bibliothek (per genres.py gepflegt)
+    if not dry_run:
+        src_genre  = src / 'genre.txt'
+        prev_genre = (prev / 'genre.txt') if prev else None
+        if src_genre.exists():
+            shutil.copy2(src_genre, dst / 'genre.txt')
+        elif prev_genre and prev_genre.exists():
             shutil.copy2(prev_genre, dst / 'genre.txt')
 
     # Unterordner zuerst rekursiv verarbeiten
@@ -437,6 +441,7 @@ def run_rclone_sync(dry_run: bool = False):
         '--filter', '+ *.png', '--filter', '+ *.bmp',
         '--filter', '+ *.gif',
         '--filter', '+ excluded.txt',
+        '--filter', '+ genre.txt',
         '--filter', '- *',
     ]
     for folder in excluded:

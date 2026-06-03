@@ -337,6 +337,16 @@ python3 ~/mediaplayer/genres.py list
 Die `genre.txt` in jedem Produktionsordner wird vom Sync erhalten und per
 Syncthing an die Pis verteilt.
 
+**Alternativ: genre.txt direkt in OneDrive pflegen.**
+Du kannst die `genre.txt` (ein Genre pro Zeile) auch direkt im jeweiligen
+Produktionsordner in OneDrive ablegen. Sie wird dann mitsynchronisiert und
+interpretiert. Vorrang-Regel:
+1. `genre.txt` aus OneDrive → maßgeblich, falls vorhanden
+2. sonst die per `genres.py` gesetzte Zuweisung
+
+Wenn du also für eine Produktion eine `genre.txt` in OneDrive anlegst,
+überschreibt sie eine eventuelle `genres.py`-Zuweisung bei jedem Sync.
+
 ### Grundstock (Sponsor-/Dauerbilder)
 
 Der Grundstock liegt zentral auf dem Server unter `/srv/basismedien/` und wird per Syncthing
