@@ -273,22 +273,44 @@ def _process_folder(src: Path, dst: Path, stats: dict, dry_run: bool, prev: Path
 
     for img in images:
         dst_img = dst / img.name
-        stats['original_bytes'] += img.stat().st_size
-        try:
-            stats['optimiert_bytes'] += optimize_image(img, dst_img)
-        except Exception as e:
-            shutil.copy2(img, dst_img)
-            stats['optimiert_bytes'] += dst_img.stat().st_size
-            print(f'    Optimierung fehlgeschlagen ({img.name}): {e}')
-        stats['kopiert'] += 1
+        st      = img.stat()
+        stats['original_bytes'] += st.st_size
 
-        if img.name not in saved_scores:
+        # Quell-Fingerabdruck zur Änderungserkennung (mtime + Größe)
+        src_mtime = int(st.st_mtime)
+        src_size  = st.st_size
+        vorh      = saved_scores.get(img.name, {})
+        prev_img  = (prev / img.name) if prev else None
+
+        unveraendert = (
+            prev_img is not None and prev_img.exists()
+            and vorh.get('src_mtime') == src_mtime
+            and vorh.get('src_size')  == src_size
+        )
+
+        if unveraendert:
+            # Bereits optimierte Datei 1:1 übernehmen → bytegleich, Syncthing überträgt nicht
+            shutil.copy2(prev_img, dst_img)
+            stats['optimiert_bytes'] += dst_img.stat().st_size
+            stats['unveraendert'] += 1
+            q = vorh
+        else:
+            # Neu oder geändert → optimieren und analysieren
+            try:
+                stats['optimiert_bytes'] += optimize_image(img, dst_img)
+            except Exception as e:
+                shutil.copy2(img, dst_img)
+                stats['optimiert_bytes'] += dst_img.stat().st_size
+                print(f'    Optimierung fehlgeschlagen ({img.name}): {e}')
             q = analyze_quality(dst_img)
             if img.name in dupes:
                 q['flagged'] = True
                 q['reason'] = f'Duplikat von {dupes[img.name]}'
-        else:
-            q = saved_scores[img.name]
+            q['src_mtime'] = src_mtime
+            q['src_size']  = src_size
+            stats['neu'] += 1
+
+        stats['kopiert'] += 1
         quality_scores[img.name] = q
         if q.get('flagged'):
             stats['flagged'] += 1
@@ -309,6 +331,7 @@ def process(src: Path, dst: Path, dry_run: bool = False, prev_root: Path = None)
         'saisons': 0, 'produktionen': 0, 'kopiert': 0,
         'hochformat': 0, 'konflikte': 0, 'uebersprungen': 0,
         'flagged': 0, 'duplikate': 0,
+        'neu': 0, 'unveraendert': 0,
         'original_bytes': 0, 'optimiert_bytes': 0,
     }
 
@@ -526,7 +549,9 @@ def _run_sync(args):
     print(f'  {stats["saisons"]} Spielzeiten, {stats["produktionen"]} Produktionen')
     if stats['uebersprungen']:
         print(f'  {stats["uebersprungen"]} Produktionen übersprungen')
-    print(f'  {stats["kopiert"]} Bilder kopiert und optimiert')
+    print(f'  {stats["kopiert"]} Bilder gesamt'
+          f'  ({stats["neu"]} neu/geändert, {stats["unveraendert"]} unverändert übernommen)')
+    print(f'  → nur die {stats["neu"]} geänderten Bilder werden an die Pis übertragen')
     print(f'  Größe: {original_mb:.0f} MB → {optimiert_mb:.0f} MB '
           f'(−{saved_mb:.0f} MB gespart)')
     print(f'  {stats["hochformat"]} Hochformat-Bilder ignoriert')
