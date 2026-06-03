@@ -435,7 +435,9 @@ def run_rclone_sync(dry_run: bool = False):
     cmd = [
         'rclone', 'sync',
         f'{RCLONE_REMOTE}:{RCLONE_PATH}', str(TMP_DIR),
-        '--read-only',   # Schreibzugriff auf OneDrive verweigern
+        # Hinweis: 'rclone sync onedrive: → lokal' schreibt nie nach OneDrive,
+        # die Cloud-Seite ist also durch die Sync-Richtung ohnehin unangetastet.
+        # Echten Schreibschutz gibt der OAuth-Scope (Files.Read) in rclone config.
         '--progress',
         '--filter', '+ *.jpg', '--filter', '+ *.jpeg',
         '--filter', '+ *.png', '--filter', '+ *.bmp',
