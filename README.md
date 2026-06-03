@@ -97,7 +97,7 @@ Web-UI öffnen: `http://<SERVER-IP>:8384`
 - **Geräte-ID des Servers notieren** (Aktionen → Identität anzeigen)
 - Für jeden Pi: Gerät hinzufügen → Pi-Geräte-ID eingeben
 - Ordner `/srv/media` mit allen Pis teilen (Typ: **Nur senden**)
-- Ordner `/srv/medienbasis` mit allen Pis teilen (Typ: **Senden & Empfangen**)
+- Ordner `/srv/basismedien` mit allen Pis teilen (Typ: **Senden & Empfangen**)
 
 ### 6. Ersten Sync durchführen
 
@@ -156,7 +156,7 @@ Web-UI öffnen: `http://<PI-IP>:8384`
 - **Geräte-ID des Pi notieren** (Aktionen → Identität anzeigen)
 - Diese ID auf dem Server unter `http://<SERVER-IP>:8384` als neues Gerät eintragen
 - Geteilten Ordner `~/media` vom Server akzeptieren (Typ: **Nur empfangen**)
-- Geteilten Ordner `~/medienbasis` vom Server akzeptieren (Typ: **Senden & Empfangen**)
+- Geteilten Ordner `~/basismedien` vom Server akzeptieren (Typ: **Senden & Empfangen**)
 
 ### 5. Neustart und Test
 
@@ -187,7 +187,7 @@ USB-Stick/
 ├── 2024-25/
 │   ├── Faust/
 │   └── Hamlet/
-├── medienbasis/     ← Sponsor-/Dauerbilder (werden immer eingestreut)
+├── basismedien/     ← Sponsor-/Dauerbilder (werden immer eingestreut)
 └── skripte/         ← Python-Dateien → werden ins Home-Verzeichnis kopiert
 ```
 Pi erkennt Stick automatisch, kopiert Bilder und wirft ihn aus.  
@@ -195,17 +195,17 @@ Papierkorb-Ordner (`.Trashes`, `$RECYCLE.BIN`, `.Trash-*`) werden ignoriert.
 
 ### Grundstock (Sponsor-/Dauerbilder)
 
-Der Grundstock liegt zentral auf dem Server unter `/srv/medienbasis/` und wird per Syncthing
-auf alle Pis verteilt (`~/medienbasis/`). Die Bilder erscheinen automatisch alle **5 Bilder**
+Der Grundstock liegt zentral auf dem Server unter `/srv/basismedien/` und wird per Syncthing
+auf alle Pis verteilt (`~/basismedien/`). Die Bilder erscheinen automatisch alle **5 Bilder**
 in jeder Diashow (konfigurierbar: `GRUNDSTOCK_INTERVAL` in `mediaplayer_app.py`, 0 = aus).
 
 **Grundstock aktualisieren per USB-Stick:**
-Stick mit Ordner `medienbasis/` an einen beliebigen Pi stecken.  
-Die Inhalte werden zu `~/medienbasis/` **hinzugefügt** (kein Löschen vorhandener Dateien)  
+Stick mit Ordner `basismedien/` an einen beliebigen Pi stecken.  
+Die Inhalte werden zu `~/basismedien/` **hinzugefügt** (kein Löschen vorhandener Dateien)  
 und von dort automatisch per Syncthing an Server + alle anderen Pis verteilt.
 
-**Grundstock-Bilder entfernen:** Kurationsmodus → Ordner `medienbasis` nicht vorhanden?  
-Direkt auf dem Server löschen: `rm /srv/medienbasis/<dateiname>` – Syncthing verteilt die Löschung.
+**Grundstock-Bilder entfernen:** Kurationsmodus → Ordner `basismedien` nicht vorhanden?  
+Direkt auf dem Server löschen: `rm /srv/basismedien/<dateiname>` – Syncthing verteilt die Löschung.
 
 ---
 

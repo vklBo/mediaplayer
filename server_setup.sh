@@ -73,12 +73,12 @@ chmod 755 "$MEDIA_DIR"
 
 # Grundstock-Ordner (Sponsor-/Dauerbilder) – wird per Syncthing bidirektional
 # mit allen Pis synchronisiert (Send & Receive, nicht nur Send wie bei media)
-mkdir -p /srv/medienbasis
-chown "$TAF_USER:$TAF_USER" /srv/medienbasis
-chmod 755 /srv/medienbasis
+mkdir -p /srv/basismedien
+chown "$TAF_USER:$TAF_USER" /srv/basismedien
+chmod 755 /srv/basismedien
 
 echo "      ✓ $MEDIA_DIR angelegt"
-echo "      ✓ /srv/medienbasis angelegt"
+echo "      ✓ /srv/basismedien angelegt"
 
 # ---------------------------------------------------------------------------
 # 3. NFS exportieren (optional – für kabelgebundene Geräte im Netz)
@@ -111,7 +111,7 @@ sleep 3
 
 echo "      ✓ Syncthing läuft (Web-UI: http://$(hostname -I | awk '{print $1}'):8384)"
 echo "      → Ordner 1: $MEDIA_DIR         → Typ: 'Nur senden' (Server → Pis)"
-echo "      → Ordner 2: /srv/medienbasis   → Typ: 'Senden & Empfangen' (bidirektional)"
+echo "      → Ordner 2: /srv/basismedien   → Typ: 'Senden & Empfangen' (bidirektional)"
 echo "      → Geräte-ID notieren und mit Pi-IDs tauschen"
 
 # ---------------------------------------------------------------------------
@@ -227,7 +227,7 @@ echo "  3. Syncthing mit Pis koppeln:"
 echo "     http://$SERVER_IP:8384"
 echo "     → Gerät hinzufügen → Pi-Geräte-ID eingeben"
 echo "     → Ordner $MEDIA_DIR teilen        (Typ: Nur senden)"
-echo "     → Ordner /srv/medienbasis teilen  (Typ: Senden & Empfangen)"
+echo "     → Ordner /srv/basismedien teilen  (Typ: Senden & Empfangen)"
 echo ""
 echo "  4. Ersten Sync manuell starten:"
 echo "     python3 $SYNC_SCRIPT_DIR/sync_onedrive.py --list-folders"

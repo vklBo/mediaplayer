@@ -149,8 +149,8 @@ echo "[4/5] Syncthing einrichten..."
 
 # Verzeichnisse anlegen
 mkdir -p "/home/$TAF_USER/media"
-mkdir -p "/home/$TAF_USER/medienbasis"
-chown "$TAF_USER:$TAF_USER" "/home/$TAF_USER/media" "/home/$TAF_USER/medienbasis"
+mkdir -p "/home/$TAF_USER/basismedien"
+chown "$TAF_USER:$TAF_USER" "/home/$TAF_USER/media" "/home/$TAF_USER/basismedien"
 
 systemctl enable "syncthing@$TAF_USER"
 systemctl start  "syncthing@$TAF_USER"
@@ -161,8 +161,8 @@ echo "      ✓ Syncthing läuft"
 echo "      → Web-UI: http://$PI_IP:8384"
 echo "      → Geräte-ID notieren, auf Server eintragen"
 echo "      → Ordner 1: ~/media        ← vom Server (Nur empfangen)"
-echo "      → Ordner 2: ~/medienbasis  ↔ bidirektional mit Server (Senden & Empfangen)"
-echo "         (USB-Stick mit medienbasis/ → wird automatisch an alle Pis verteilt)"
+echo "      → Ordner 2: ~/basismedien  ↔ bidirektional mit Server (Senden & Empfangen)"
+echo "         (USB-Stick mit basismedien/ → wird automatisch an alle Pis verteilt)"
 
 # ---------------------------------------------------------------------------
 # 5. mediaplayer-Service einrichten

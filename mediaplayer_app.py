@@ -13,7 +13,7 @@
 #
 # USB-Stick-Struktur:
 #   <root>/          → Saisonen/Produktionen wie oben
-#   medienbasis/     → Bilder, die immer eingeblendet werden (flach)
+#   basismedien/     → Bilder, die immer eingeblendet werden (flach)
 #   skripte/         → Python-Dateien, die ins Home-Verzeichnis kopiert werden
 #
 # Kuration:
@@ -55,7 +55,7 @@ from kivy.core.window import Window                                         # no
 # ---------------------------------------------------------------------------
 
 MEDIA_DIR     = Path.home() / 'media'
-BASIS_DIR     = Path.home() / 'medienbasis'
+BASIS_DIR     = Path.home() / 'basismedien'
 THUMB_DIR     = Path.home() / '.thumbs'
 USB_BASE_PATH = Path('/media/taf')
 
@@ -343,7 +343,7 @@ def _is_usb_skip(path: Path) -> bool:
 
 
 def _copy_flat(src: Path, dst: Path):
-    """Kopiert Mediendateien flach (nur eine Ebene, für medienbasis/skripte)."""
+    """Kopiert Mediendateien flach (nur eine Ebene, für basismedien/skripte)."""
     for item in src.iterdir():
         if _is_usb_skip(item):
             continue
@@ -374,7 +374,7 @@ def _copy_structured(src: Path, dst: Path):
     for saison in src.iterdir():
         if _is_usb_skip(saison):
             continue
-        if saison.name in ('medienbasis', 'skripte') or not saison.is_dir():
+        if saison.name in ('basismedien', 'skripte') or not saison.is_dir():
             continue
         target_saison = dst / saison.name
         target_saison.mkdir(exist_ok=True)
@@ -392,7 +392,7 @@ def usb_monitor_loop(app: 'MediaplayerApp'):
         if not usb_path:
             continue
         print(f'USB gefunden: {usb_path}')
-        basis_usb = usb_path / 'medienbasis'
+        basis_usb = usb_path / 'basismedien'
         if basis_usb.exists():
             # Merge statt Replace: vorhandene Dateien bleiben erhalten.
             # Syncthing verteilt neue Dateien automatisch an Server + andere Pis.
@@ -707,7 +707,7 @@ class SpielsaisonScreen(Screen):
         grid = make_grid(TILE_COLS)
 
         saisons = sorted(
-            (d for d in MEDIA_DIR.iterdir() if d.is_dir() and d.name != 'medienbasis'),
+            (d for d in MEDIA_DIR.iterdir() if d.is_dir() and d.name != 'basismedien'),
             reverse=True,
         )
         for saison in saisons:
@@ -863,7 +863,7 @@ class KurationSaisonScreen(Screen):
         grid = make_grid(TILE_COLS)
 
         saisons = sorted(
-            (d for d in MEDIA_DIR.iterdir() if d.is_dir() and d.name != 'medienbasis'),
+            (d for d in MEDIA_DIR.iterdir() if d.is_dir() and d.name != 'basismedien'),
             reverse=True,
         )
         for saison in saisons:
