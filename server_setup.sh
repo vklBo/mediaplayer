@@ -87,6 +87,11 @@ chmod 755 /srv/basismedien
 echo "      ✓ $MEDIA_DIR angelegt"
 echo "      ✓ /srv/basismedien angelegt"
 
+# Staging-Ordner für absturzsicheren Sync (gleiches Dateisystem wie /srv/media!)
+mkdir -p /srv/media_staging
+chown "$TAF_USER:$TAF_USER" /srv/media_staging
+chmod 755 /srv/media_staging
+
 # QLab-Backup und Medienbibliothek
 mkdir -p /srv/qlab_backup
 mkdir -p /srv/qlab_media

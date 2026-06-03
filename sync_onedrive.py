@@ -19,6 +19,7 @@
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -33,6 +34,7 @@ from PIL import Image as PILImage
 RCLONE_REMOTE  = 'onedrive'          # rclone-Konfigurationsname
 RCLONE_PATH    = 'Theater/Fotos'     # Pfad in OneDrive/SharePoint
 MEDIA_DIR      = Path('/srv/media')  # Ziel (wird per Syncthing verteilt)
+STAGING_DIR    = Path('/srv/media_staging')  # Zwischenstufe – wird erst bei Erfolg umgeschaltet
 TMP_DIR        = Path.home() / '.media_sync_tmp'
 
 EXCLUDED_FOLDERS_FILE = Path(__file__).parent / 'excluded_folders.txt'
@@ -224,18 +226,22 @@ def detect_duplicates(images: list) -> dict:
 # Verarbeitung: Struktur erhalten + Optimieren + Analysieren
 # ---------------------------------------------------------------------------
 
-def _process_folder(src: Path, dst: Path, stats: dict, dry_run: bool):
+def _process_folder(src: Path, dst: Path, stats: dict, dry_run: bool, prev: Path = None):
     """
     Verarbeitet einen Ordner rekursiv und erhält die Unterordner-Struktur.
     Jeder Ordner bekommt seine eigene quality_scores.json.
     Bilder werden pro Ordner analysiert (keine Duplikat-Erkennung über Ordner hinweg).
+
+    prev: entsprechender Ordner in der bestehenden Bibliothek (/srv/media),
+          aus dem excluded.txt und quality_scores.json übernommen werden.
     """
     # Unterordner zuerst rekursiv verarbeiten
     for sub in sorted(f for f in src.iterdir() if f.is_dir()):
-        dst_sub = dst / sub.name
+        dst_sub  = dst / sub.name
+        prev_sub = (prev / sub.name) if prev else None
         if not dry_run:
             dst_sub.mkdir(parents=True, exist_ok=True)
-        _process_folder(sub, dst_sub, stats, dry_run)
+        _process_folder(sub, dst_sub, stats, dry_run, prev_sub)
 
     # Bilder direkt in diesem Ordner (nicht rekursiv)
     images_all = [f for f in sorted(src.iterdir())
@@ -252,11 +258,14 @@ def _process_folder(src: Path, dst: Path, stats: dict, dry_run: bool):
     if not images:
         return
 
-    # excluded.txt + quality_scores.json aus Zielordner erhalten
+    # excluded.txt + quality_scores.json aus der BESTEHENDEN Bibliothek übernehmen
+    # (prev zeigt auf den entsprechenden Ordner in /srv/media, nicht ins leere Staging)
     excl_path  = dst / 'excluded.txt'
     score_path = dst / 'quality_scores.json'
-    saved_excl   = excl_path.read_text('utf-8')  if excl_path.exists()  else None
-    saved_scores = json.loads(score_path.read_text('utf-8')) if score_path.exists() else {}
+    prev_excl   = (prev / 'excluded.txt')        if prev else None
+    prev_score  = (prev / 'quality_scores.json') if prev else None
+    saved_excl   = prev_excl.read_text('utf-8')  if (prev_excl and prev_excl.exists())  else None
+    saved_scores = json.loads(prev_score.read_text('utf-8')) if (prev_score and prev_score.exists()) else {}
 
     dupes = detect_duplicates(images)
     stats['duplikate'] += len(dupes)
@@ -289,9 +298,12 @@ def _process_folder(src: Path, dst: Path, stats: dict, dry_run: bool):
         excl_path.write_text(saved_excl, 'utf-8')
 
 
-def process(src: Path, dst: Path, dry_run: bool = False) -> dict:
+def process(src: Path, dst: Path, dry_run: bool = False, prev_root: Path = None) -> dict:
     """Liest Saison/Produktion-Struktur aus src, schreibt nach dst.
-    Unterordner unterhalb der Produktionsebene werden erhalten."""
+    Unterordner unterhalb der Produktionsebene werden erhalten.
+
+    prev_root: bestehende Bibliothek (/srv/media), aus der Kurations- und
+               Qualitätsdaten übernommen werden (Staging-Konzept)."""
     excluded = load_excluded_folders()
     stats = {
         'saisons': 0, 'produktionen': 0, 'kopiert': 0,
@@ -320,10 +332,11 @@ def process(src: Path, dst: Path, dry_run: bool = False) -> dict:
                 print(f'  SYNC  {saison_dir.name}/{prod_dir.name}:')
 
             target_prod = dst / saison_dir.name / prod_dir.name
+            prev_prod = (prev_root / saison_dir.name / prod_dir.name) if prev_root else None
             if not dry_run:
                 target_prod.mkdir(parents=True, exist_ok=True)
 
-            _process_folder(prod_dir, target_prod, stats, dry_run)
+            _process_folder(prod_dir, target_prod, stats, dry_run, prev_prod)
 
     return stats
 
@@ -447,6 +460,39 @@ def main():
         LOCK_FILE.unlink(missing_ok=True)
 
 
+def _swap_staging_to_media():
+    """
+    Ersetzt den Inhalt von MEDIA_DIR durch STAGING_DIR.
+    Tauscht die Saison-Ordner einzeln per os.rename (atomar pro Ordner),
+    damit der Syncthing-Ordner-Root erhalten bleibt und das Zeitfenster
+    eines inkonsistenten Zustands minimal ist.
+    """
+    MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    neue_namen = {p.name for p in STAGING_DIR.iterdir()}
+
+    # 1. Ordner, die es im Staging nicht mehr gibt, aus MEDIA_DIR entfernen
+    for item in MEDIA_DIR.iterdir():
+        if item.name not in neue_namen:
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+
+    # 2. Jeden Staging-Ordner an seinen Platz schieben (alten vorher weg)
+    for src in STAGING_DIR.iterdir():
+        ziel = MEDIA_DIR / src.name
+        if ziel.exists():
+            if ziel.is_dir():
+                shutil.rmtree(ziel)
+            else:
+                ziel.unlink()
+        os.replace(str(src), str(ziel))   # atomar auf demselben Dateisystem
+
+    # 3. Staging-Reste entfernen
+    if STAGING_DIR.exists():
+        shutil.rmtree(STAGING_DIR)
+
+
 def _run_sync(args):
     if not args.no_sync:
         TMP_DIR.mkdir(exist_ok=True)
@@ -457,13 +503,20 @@ def _run_sync(args):
         process(TMP_DIR, MEDIA_DIR, dry_run=True)
         return
 
-    print(f'\nVerarbeite {TMP_DIR} → {MEDIA_DIR} …')
-    if MEDIA_DIR.exists():
-        for item in MEDIA_DIR.iterdir():
-            if item.is_dir():
-                shutil.rmtree(item)
-    MEDIA_DIR.mkdir(exist_ok=True)
-    stats = process(TMP_DIR, MEDIA_DIR)
+    # --- Staging-Konzept: erst vollständig aufbauen, dann atomar umschalten ---
+    # Reste eines früheren abgebrochenen Laufs entfernen
+    if STAGING_DIR.exists():
+        shutil.rmtree(STAGING_DIR)
+    STAGING_DIR.mkdir(parents=True, exist_ok=True)
+
+    print(f'\nVerarbeite {TMP_DIR} → {STAGING_DIR} (Staging) …')
+    # In Staging aufbauen, Kurations-/Qualitätsdaten aus bestehender Bibliothek übernehmen
+    stats = process(TMP_DIR, STAGING_DIR, prev_root=MEDIA_DIR)
+
+    # Erst JETZT (nach erfolgreichem Aufbau) die Live-Bibliothek ersetzen.
+    # Bei einem Absturz oben bleibt MEDIA_DIR unangetastet und die Pis zeigen weiter an.
+    print(f'Schalte Staging → {MEDIA_DIR} um …')
+    _swap_staging_to_media()
 
     saved_mb    = (stats['original_bytes'] - stats['optimiert_bytes']) / 1_000_000
     original_mb = stats['original_bytes'] / 1_000_000
