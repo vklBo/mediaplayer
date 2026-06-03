@@ -499,6 +499,21 @@ def main():
         LOCK_FILE.unlink(missing_ok=True)
 
 
+def _clear_contents(directory: Path):
+    """
+    Löscht alles INNERHALB von directory, behält das Verzeichnis selbst.
+    Wichtig, weil /srv root gehört: taf darf den Inhalt von /srv/media_staging
+    bearbeiten, aber das Verzeichnis selbst nicht entfernen (kein Schreibrecht auf /srv).
+    """
+    if not directory.exists():
+        return
+    for item in directory.iterdir():
+        if item.is_dir():
+            shutil.rmtree(item)
+        else:
+            item.unlink()
+
+
 def _swap_staging_to_media():
     """
     Ersetzt den Inhalt von MEDIA_DIR durch STAGING_DIR.
@@ -527,9 +542,8 @@ def _swap_staging_to_media():
                 ziel.unlink()
         os.replace(str(src), str(ziel))   # atomar auf demselben Dateisystem
 
-    # 3. Staging-Reste entfernen
-    if STAGING_DIR.exists():
-        shutil.rmtree(STAGING_DIR)
+    # 3. Staging-Inhalt aufräumen (Verzeichnis selbst behalten – /srv gehört root)
+    _clear_contents(STAGING_DIR)
 
 
 def _run_sync(args):
@@ -543,10 +557,9 @@ def _run_sync(args):
         return
 
     # --- Staging-Konzept: erst vollständig aufbauen, dann atomar umschalten ---
-    # Reste eines früheren abgebrochenen Laufs entfernen
-    if STAGING_DIR.exists():
-        shutil.rmtree(STAGING_DIR)
+    # Reste eines früheren abgebrochenen Laufs entfernen (nur Inhalt, nicht den Ordner)
     STAGING_DIR.mkdir(parents=True, exist_ok=True)
+    _clear_contents(STAGING_DIR)
 
     print(f'\nVerarbeite {TMP_DIR} → {STAGING_DIR} (Staging) …')
     # In Staging aufbauen, Kurations-/Qualitätsdaten aus bestehender Bibliothek übernehmen
