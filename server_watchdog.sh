@@ -115,10 +115,19 @@ fi
 # ---------------------------------------------------------------------------
 
 # Bedingung 1: Läuft noch ein Sync?
+# Die Lock-Datei enthält die PID des Sync-Prozesses. Nur wenn dieser
+# Prozess tatsächlich noch läuft, ist der Sync aktiv. Eine verwaiste
+# Lock-Datei (nach SIGKILL/OOM/Absturz) wird erkannt und entfernt,
+# damit sie das Herunterfahren nicht dauerhaft blockiert.
 if [ -f "$LOCK_FILE" ]; then
-    echo "$LOG_PREFIX OneDrive-Sync läuft noch – Shutdown verschoben"
-    # Timer nicht zurücksetzen: Pis sind weg, aber wir warten auf Sync
-    exit 0
+    LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null)
+    if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
+        echo "$LOG_PREFIX OneDrive-Sync läuft (PID $LOCK_PID) – Shutdown verschoben"
+        exit 0
+    else
+        echo "$LOG_PREFIX Verwaiste Lock-Datei (PID '$LOCK_PID' läuft nicht mehr) – wird entfernt"
+        rm -f "$LOCK_FILE"
+    fi
 fi
 
 # Bedingung 2: Überträgt Syncthing noch Daten an Pis?

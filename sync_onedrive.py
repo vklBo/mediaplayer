@@ -475,8 +475,10 @@ def main():
         push_excluded_back()
         return
 
-    # Lock-Datei setzen – Watchdog wartet damit auf Fertigstellung
-    LOCK_FILE.touch()
+    # Lock-Datei mit eigener PID setzen – der Watchdog prüft, ob dieser
+    # Prozess noch lebt. So wird eine verwaiste Lock-Datei (nach SIGKILL/OOM)
+    # erkannt und blockiert das Herunterfahren nicht dauerhaft.
+    LOCK_FILE.write_text(str(os.getpid()))
     try:
         _run_sync(args)
     finally:
