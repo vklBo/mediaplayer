@@ -47,7 +47,7 @@ Raspberry Pi 4 (Touch-Kiosk)           MacBook (QLab)
 
 | Gerät | Anforderungen |
 |-------|---------------|
-| Dell Optiplex | Ubuntu/Debian, kabelgebunden am UDM-SE, WoL im BIOS aktiviert |
+| Dell Optiplex | Debian-basiertes Linux (Ubuntu, Linux Mint, Debian), kabelgebunden am UDM-SE, WoL im BIOS aktiviert |
 | Raspberry Pi 4 | Pi OS Lite 64-bit, WLAN, Touch-Display |
 | MacBook | macOS, WLAN, QLab 5 |
 | Netzwerk | Alle Geräte im gleichen Subnetz (WoL-Broadcast muss Grenze passieren) |
@@ -70,8 +70,9 @@ ssh taf@<SERVER-IP>
 sudo bash ~/mediaplayer/server_setup.sh
 ```
 
-Installiert: rclone, syncthing, python3-opencv, pillow, imagehash, nfs-kernel-server  
-Richtet ein: `/srv/media`, Syncthing-Service, Watchdog-Timer, Sync-Boot-Service
+Funktioniert auf allen Debian-basierten Systemen (Ubuntu, Linux Mint, Debian).  
+Installiert: rclone, syncthing, ffmpeg, python3-opencv, pillow, imagehash, flask, nfs-kernel-server  
+Richtet ein: `/srv/media`, `/srv/basismedien`, `/srv/qlab_backup`, Syncthing-Service, Watchdog-Timer, Sync-Boot-Service, QLab-Web-UI
 
 ### 3. OneDrive verbinden
 
@@ -113,7 +114,8 @@ Web-UI öffnen: `http://<SERVER-IP>:8384`
 - **Geräte-ID des Servers notieren** (Aktionen → Identität anzeigen)
 - Für jeden Pi: Gerät hinzufügen → Pi-Geräte-ID eingeben
 - Ordner `/srv/media` mit allen Pis teilen (Typ: **Nur senden**)
-- Ordner `/srv/basismedien` mit Pis + MacBook teilen (Typ: **Senden & Empfangen**)
+- Ordner `/srv/basismedien` mit Pis + MacBook teilen (Typ: **Senden & Empfangen**)  
+  *(optional – erst einrichten wenn Basismedien-Sync gewünscht)*
 - Ordner `/srv/qlab_backup` mit MacBook teilen (Typ: **Nur empfangen**)
 
 ### 6. Ersten Sync durchführen
