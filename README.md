@@ -309,6 +309,34 @@ USB-Stick/
 Pi erkennt Stick automatisch, kopiert Bilder und wirft ihn aus.  
 Papierkorb-Ordner (`.Trashes`, `$RECYCLE.BIN`, `.Trash-*`) werden ignoriert.
 
+### Genres zuweisen (hierarchisch)
+
+Produktionen können hierarchischen Genres zugeordnet werden (mehrere möglich).
+Auf dem Pi erscheint dann ein Button **🎭 Genres**, über den man alle Bilder
+aller Produktionen eines Genres durchsehen kann – auch Oberkategorien
+aggregieren ihre Unterkategorien.
+
+**Auf dem Server:**
+```bash
+# 1. Vorlage aus vorhandenen Produktionen erzeugen
+python3 ~/mediaplayer/genres.py scan
+
+# 2. Genres eintragen (hierarchisch mit /)
+nano /srv/genres.txt
+#   2024-25/Raeuberkinder = JungesEnsemble/Kinder
+#   2024-25/Romeo         = JungesEnsemble/Jugendliche, Drama
+#   2024-25/Faust         = Drama/Klassiker
+
+# 3. In die Produktionsordner schreiben (→ Syncthing verteilt an Pis)
+python3 ~/mediaplayer/genres.py apply
+
+# Übersicht + Genre-Baum anzeigen
+python3 ~/mediaplayer/genres.py list
+```
+
+Die `genre.txt` in jedem Produktionsordner wird vom Sync erhalten und per
+Syncthing an die Pis verteilt.
+
 ### Grundstock (Sponsor-/Dauerbilder)
 
 Der Grundstock liegt zentral auf dem Server unter `/srv/basismedien/` und wird per Syncthing
@@ -478,6 +506,7 @@ journalctl -u taf-wol.service
 |-------|-------|-------|
 | `mediaplayer_app.py` | Pi | Kivy-App: Touch-UI, Diashow, Kuration |
 | `sync_onedrive.py` | Server | OneDrive → /srv/media, Optimierung, Qualitätsanalyse |
+| `genres.py` | Server | Hierarchische Genres an Produktionen zuweisen |
 | `qlab_media_collector.py` | Server | QLab-Backup scannen, Katalog aufbauen |
 | `qlab_web.py` | Server | Webinterface Medienbibliothek (Port 5000) |
 | `server_setup.sh` | Server | Einmalige Einrichtung des Dell Optiplex |

@@ -235,6 +235,13 @@ def _process_folder(src: Path, dst: Path, stats: dict, dry_run: bool, prev: Path
     prev: entsprechender Ordner in der bestehenden Bibliothek (/srv/media),
           aus dem excluded.txt und quality_scores.json übernommen werden.
     """
+    # genre.txt aus der bestehenden Bibliothek übernehmen (Produktionsebene,
+    # zentral per genres.py gepflegt – darf vom Sync nicht verloren gehen)
+    if prev and not dry_run:
+        prev_genre = prev / 'genre.txt'
+        if prev_genre.exists():
+            shutil.copy2(prev_genre, dst / 'genre.txt')
+
     # Unterordner zuerst rekursiv verarbeiten
     for sub in sorted(f for f in src.iterdir() if f.is_dir()):
         dst_sub  = dst / sub.name

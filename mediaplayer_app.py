@@ -223,6 +223,90 @@ def toggle_folder_excluded(folder: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Genres (hierarchisch, genre.txt pro Produktion – zentral am Server gepflegt)
+# ---------------------------------------------------------------------------
+
+GENRE_FILE = 'genre.txt'
+
+
+def load_genres(folder: Path) -> list:
+    """Liest genre.txt eines Produktionsordners → Liste hierarchischer Genres."""
+    f = folder / GENRE_FILE
+    if not f.exists():
+        return []
+    return [l.strip() for l in f.read_text(encoding='utf-8').splitlines() if l.strip()]
+
+
+def iter_produktionen():
+    """Liefert alle Produktionsordner (Saison/Produktion) aus MEDIA_DIR."""
+    for saison in MEDIA_DIR.iterdir():
+        if not saison.is_dir() or saison.name == 'basismedien':
+            continue
+        for prod in saison.iterdir():
+            if prod.is_dir():
+                yield prod
+
+
+def build_genre_index() -> dict:
+    """
+    Baut den Genre→Produktionen-Index aus allen genre.txt-Dateien.
+    Gibt dict zurück: vollständiger Genre-Pfad → Liste von Produktionsordnern.
+    """
+    index = {}
+    for prod in iter_produktionen():
+        if is_folder_excluded(prod):
+            continue
+        for genre in load_genres(prod):
+            index.setdefault(genre, []).append(prod)
+    return index
+
+
+def genre_kinder(genre_index: dict, prefix: str = '') -> list:
+    """
+    Gibt die direkten Kind-Knoten unterhalb von 'prefix' im Genre-Baum zurück.
+    prefix='' → oberste Ebene. Beispiel: 'JungesEnsemble' → ['Kinder', 'Jugendliche'].
+    Rückgabe: sortierte Liste von (kindname, vollpfad).
+    """
+    tiefe = 0 if not prefix else prefix.count('/') + 1
+    kinder = set()
+    for genre in genre_index:
+        teile = genre.split('/')
+        if prefix:
+            p_teile = prefix.split('/')
+            if teile[:len(p_teile)] != p_teile or len(teile) <= len(p_teile):
+                continue
+        if len(teile) > tiefe:
+            kindname = teile[tiefe]
+            vollpfad = '/'.join(teile[:tiefe + 1])
+            kinder.add((kindname, vollpfad))
+    return sorted(kinder)
+
+
+def produktionen_fuer_genre(genre_index: dict, genre_prefix: str) -> list:
+    """
+    Alle Produktionen, deren Genre exakt 'genre_prefix' ist ODER darunter liegt
+    (Oberkategorie aggregiert alle Unterkategorien). Ohne Duplikate.
+    """
+    seen = set()
+    result = []
+    for genre, prods in genre_index.items():
+        if genre == genre_prefix or genre.startswith(genre_prefix + '/'):
+            for p in prods:
+                if p not in seen:
+                    seen.add(p)
+                    result.append(p)
+    return result
+
+
+def bilder_fuer_genre(genre_index: dict, genre_prefix: str) -> list:
+    """Alle (nicht ausgeschlossenen) Bilder aller Produktionen eines Genres."""
+    bilder = []
+    for prod in produktionen_fuer_genre(genre_index, genre_prefix):
+        bilder.extend(get_image_files(prod))
+    return bilder
+
+
+# ---------------------------------------------------------------------------
 # Thumbnail-Hilfsfunktionen
 # ---------------------------------------------------------------------------
 
@@ -719,6 +803,11 @@ class SpielsaisonScreen(Screen):
             color=(0.4, 0.8, 1, 1),
         )
         header.add_widget(app._sync_label)
+        # Genre-Button nur zeigen, wenn überhaupt Genres vergeben sind
+        if build_genre_index():
+            btn_genre = Button(text='🎭 Genres', size_hint=(None, 1), width=150, font_size='18sp')
+            btn_genre.bind(on_press=self._enter_genres)
+            header.add_widget(btn_genre)
         btn_kuration = Button(text='✏ Kuration', size_hint=(None, 1), width=160, font_size='18sp')
         btn_kuration.bind(on_press=self._enter_kuration)
         header.add_widget(btn_kuration)
@@ -757,6 +846,88 @@ class SpielsaisonScreen(Screen):
             self.manager.get_screen('kuration_saison').build()
             _go_to(self.manager, 'kuration_saison')
         PinPopup(on_success=_open).open()
+
+    def _enter_genres(self, *args):
+        self.manager.get_screen('genre').load(prefix='', back_target='spielsaison')
+        _go_to(self.manager, 'genre')
+
+
+class GenreScreen(Screen):
+    """Hierarchische Genre-Navigation: Oberkategorien → Unterkategorien → Diashow."""
+
+    def load(self, prefix: str = '', back_target: str = 'spielsaison'):
+        self._prefix      = prefix
+        self._root_target = back_target   # wohin "Zurück" von der obersten Ebene führt
+        self._build()
+
+    def _build(self):
+        self.clear_widgets()
+        index = build_genre_index()
+        root = BoxLayout(orientation='vertical')
+
+        # Header mit Eltern-bewusstem Zurück-Button
+        header = BoxLayout(size_hint=(1, None), height=70)
+        btn_back = Button(text='← Zurück', size_hint=(None, 1), width=160, font_size='18sp')
+        btn_back.bind(on_press=self._zurueck)
+        header.add_widget(btn_back)
+        titel = f'Genre: {self._prefix}' if self._prefix else 'Genres'
+        header.add_widget(Label(text=titel, font_size='24sp'))
+        root.add_widget(header)
+
+        scroll = ScrollView()
+        grid = make_grid(TILE_COLS)
+
+        # "Alle anzeigen"-Kachel, wenn wir in einer Oberkategorie mit Treffern sind
+        if self._prefix:
+            bilder = bilder_fuer_genre(index, self._prefix)
+            if bilder:
+                grid.add_widget(Kachel(
+                    title=f'▶ Alle anzeigen ({len(bilder)})',
+                    thumb_path=make_image_thumbnail(bilder[0]),
+                    callback=lambda b=bilder: self._play(b, self._prefix),
+                ))
+
+        for kindname, vollpfad in genre_kinder(index, self._prefix):
+            bilder      = bilder_fuer_genre(index, vollpfad)
+            unterkinder = genre_kinder(index, vollpfad)
+            thumb       = make_image_thumbnail(bilder[0]) if bilder else ''
+            anzahl      = len(bilder)
+            if unterkinder:
+                grid.add_widget(Kachel(
+                    title=f'{kindname}  ▸ ({anzahl})',
+                    thumb_path=thumb,
+                    callback=lambda v=vollpfad: self._drill(v),
+                ))
+            else:
+                grid.add_widget(Kachel(
+                    title=f'{kindname} ({anzahl})',
+                    thumb_path=thumb,
+                    callback=lambda b=bilder, v=vollpfad: self._play(b, v),
+                ))
+
+        scroll.add_widget(grid)
+        root.add_widget(scroll)
+        self.add_widget(root)
+
+    def _zurueck(self, *args):
+        if not self._prefix:
+            _go_to(self.manager, self._root_target, 'right')
+        else:
+            # Eine Genre-Ebene nach oben
+            self._prefix = '/'.join(self._prefix.split('/')[:-1])
+            self._build()
+
+    def _drill(self, vollpfad: str):
+        self._prefix = vollpfad
+        self._build()
+
+    def _play(self, bilder: list, titel: str):
+        if not bilder:
+            return
+        self.manager.get_screen('slideshow').load_images(
+            bilder, f'Genre: {titel}', back_target='genre'
+        )
+        _go_to(self.manager, 'slideshow')
 
 
 class ProduktionenScreen(Screen):
@@ -797,6 +968,7 @@ class SlideshowScreen(Screen):
         self._index = 0
         self._timer = None
         self._prod_name = ''
+        self._back_target = 'produktionen'
 
         root = BoxLayout(orientation='vertical')
         self._img = KivyImage(allow_stretch=True, keep_ratio=True)
@@ -804,7 +976,7 @@ class SlideshowScreen(Screen):
 
         bar = BoxLayout(size_hint=(1, None), height=60)
         btn_back = Button(text='← Zurück', size_hint=(None, 1), width=160, font_size='18sp')
-        btn_back.bind(on_press=lambda *a: _go_to(self.manager, 'produktionen', 'right'))
+        btn_back.bind(on_press=lambda *a: _go_to(self.manager, self._back_target, 'right'))
         btn_prev = Button(text='‹', size_hint=(None, 1), width=80, font_size='24sp')
         btn_next = Button(text='›', size_hint=(None, 1), width=80, font_size='24sp')
         btn_prev.bind(on_press=self._prev)
@@ -818,11 +990,17 @@ class SlideshowScreen(Screen):
         self.add_widget(root)
 
     def load(self, prod_path: Path):
-        self._prod_name = prod_path.name
+        """Diashow einer einzelnen Produktion."""
         prod_images = get_image_files(prod_path)
-        grundstock   = get_grundstock_images()
-        self._images = interleave_grundstock(prod_images, grundstock, GRUNDSTOCK_INTERVAL)
-        self._index  = 0
+        self.load_images(prod_images, prod_path.name, back_target='produktionen')
+
+    def load_images(self, images: list, title: str, back_target: str = 'produktionen'):
+        """Diashow aus einer beliebigen Bilderliste (z.B. genreübergreifend)."""
+        self._prod_name    = title
+        self._back_target  = back_target
+        grundstock         = get_grundstock_images()
+        self._images       = interleave_grundstock(list(images), grundstock, GRUNDSTOCK_INTERVAL)
+        self._index        = 0
         self._show()
 
     def on_enter(self, *args):
@@ -1227,6 +1405,7 @@ class MediaplayerApp(App):
         sm.add_widget(SpielsaisonScreen(name='spielsaison'))
         sm.add_widget(ProduktionenScreen(name='produktionen'))
         sm.add_widget(SlideshowScreen(name='slideshow'))
+        sm.add_widget(GenreScreen(name='genre'))
         sm.add_widget(KurationSaisonScreen(name='kuration_saison'))
         sm.add_widget(KurationProdScreen(name='kuration_prod'))
         sm.add_widget(KurationSubordnerScreen(name='kuration_subordner'))
