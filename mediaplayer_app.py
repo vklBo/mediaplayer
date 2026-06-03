@@ -25,9 +25,12 @@ import os
 import threading
 import shutil
 import time
+import socket
 import subprocess
 import urllib.request
 import xml.etree.ElementTree as ET
+import json
+from datetime import datetime
 from pathlib import Path
 from PIL import Image as PILImage
 
@@ -72,6 +75,24 @@ KURATION_COLS      = 6       # Spalten im Bild-Kurationsmodus
 
 IMAGE_EXTS   = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif'}
 ALLOWED_EXTS = IMAGE_EXTS | {'.mp4', '.avi', '.mkv', '.mov'}
+
+# Kurationsentscheidungen werden als JSONL geloggt (für späteres ML-Training).
+# Eine Zeile pro Bild und Entscheidung.
+# Tipp: ~/kuration_log.jsonl per Syncthing (Send & Receive) auf den Server übertragen,
+# damit Entscheidungen aller Pis zentral gesammelt werden.
+KURATION_LOG = Path.home() / 'kuration_log.jsonl'
+
+
+def _log_kuration(entries: list):
+    """Hängt Kurationsentscheidungen an ~/kuration_log.jsonl an."""
+    if not entries:
+        return
+    try:
+        with KURATION_LOG.open('a', encoding='utf-8') as f:
+            for entry in entries:
+                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+    except Exception as e:
+        print(f'Kuration-Log fehlgeschlagen: {e}')
 
 # ---------------------------------------------------------------------------
 # Syncthing-Status
@@ -963,6 +984,7 @@ class KurationBilderScreen(Screen):
         super().__init__(**kwargs)
         self._prod_path = None
         self._excluded = set()
+        self._initial_excluded = set()   # Zustand beim Öffnen – für ML-Log
         self._to_delete = set()
         self._scores = {}
         self._show_flagged_only = False
@@ -970,6 +992,7 @@ class KurationBilderScreen(Screen):
     def load(self, prod_path: Path):
         self._prod_path = prod_path
         self._excluded = load_excluded(prod_path) - {'*'}
+        self._initial_excluded = set(self._excluded)  # Snapshot für Log
         self._to_delete = set()
         self._scores = load_quality_scores(prod_path)
         self._show_flagged_only = False
@@ -1061,16 +1084,67 @@ class KurationBilderScreen(Screen):
         self._build()
 
     def _save(self, *args):
+        all_images = get_all_image_files(self._prod_path)
+
+        # Kurationsentscheidungen für ML-Log aufzeichnen
+        log_entries = []
+        hostname = socket.gethostname()
+        timestamp = datetime.now().isoformat(timespec='seconds')
+
+        # Pfad relativ zu MEDIA_DIR für spätere Auswertung
+        try:
+            rel_path = self._prod_path.relative_to(MEDIA_DIR)
+            parts = rel_path.parts
+            saison     = parts[0] if len(parts) > 0 else ''
+            produktion = parts[1] if len(parts) > 1 else ''
+            unterordner = '/'.join(parts[2:]) if len(parts) > 2 else ''
+        except ValueError:
+            saison = produktion = unterordner = ''
+
+        for img_file in all_images:
+            name = img_file.name
+            war_ausgeschlossen = name in self._initial_excluded
+            ist_ausgeschlossen = name in self._excluded
+            wird_geloescht     = name in self._to_delete
+
+            if wird_geloescht:
+                aktion = 'geloescht'
+            elif not war_ausgeschlossen and ist_ausgeschlossen:
+                aktion = 'ausgeschlossen'
+            elif war_ausgeschlossen and not ist_ausgeschlossen:
+                aktion = 'wiederhergestellt'
+            else:
+                aktion = 'unveraendert'
+
+            q = self._scores.get(name, {})
+            log_entries.append({
+                'timestamp':          timestamp,
+                'pi':                 hostname,
+                'aktion':             aktion,
+                'dateiname':          name,
+                'saison':             saison,
+                'produktion':         produktion,
+                'unterordner':        unterordner,
+                'war_ausgeschlossen': war_ausgeschlossen,
+                # Qualitätsmerkmale (Features für ML)
+                'sharpness':          q.get('sharpness', -1),
+                'noise':              q.get('noise', -1),
+                'brightness':         q.get('brightness', -1),
+                'auto_flagged':       q.get('flagged', False),
+                'auto_reason':        q.get('reason', ''),
+            })
+
+        _log_kuration(log_entries)
+
         # Dateien löschen
         for name in self._to_delete:
             f = self._prod_path / name
             if f.exists():
                 f.unlink()
-            # Thumbnail ebenfalls löschen
             thumb = THUMB_DIR / f"img__{self._prod_path.parent.name}__{self._prod_path.name}__{f.stem}.jpg"
             thumb.unlink(missing_ok=True)
 
-        # Ausgeschlossene speichern (gelöschte nicht mehr aufführen)
+        # Ausgeschlossene speichern
         remaining_excluded = self._excluded - self._to_delete
         save_excluded(self._prod_path, remaining_excluded)
 
