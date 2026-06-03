@@ -15,7 +15,7 @@
 
 # MAC-Adresse des Medienservers (Dell Optiplex)
 # Auf dem Server herausfinden mit: ip link show
-SERVER_MAC="AA:BB:CC:DD:EE:FF"
+SERVER_MAC="50:9A:4C:49:37:29"
 
 # IP-Adresse des Medienservers
 SERVER_IP="192.168.1.100"
