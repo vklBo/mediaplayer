@@ -322,7 +322,7 @@ aggregieren ihre Unterkategorien.
 python3 ~/mediaplayer/genres.py scan
 
 # 2. Genres eintragen (hierarchisch mit /)
-nano /srv/genres.txt
+nano ~/mediaplayer/genres.txt
 #   2024-25/Raeuberkinder = JungesEnsemble/Kinder
 #   2024-25/Romeo         = JungesEnsemble/Jugendliche, Drama
 #   2024-25/Faust         = Drama/Klassiker

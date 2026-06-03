@@ -4,6 +4,7 @@
 
 # Lokale Sync-Konfiguration (enthält eure Ordnernamen, nicht ins Repo)
 excluded_folders.txt
+genres.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

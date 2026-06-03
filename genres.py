@@ -24,7 +24,8 @@ import sys
 from pathlib import Path
 
 MEDIA_DIR   = Path('/srv/media')
-GENRES_FILE = Path('/srv/genres.txt')
+# Im Projektverzeichnis (schreibbar für taf), nicht unter /srv (nur root)
+GENRES_FILE = Path(__file__).parent / 'genres.txt'
 GENRE_TXT   = 'genre.txt'
 
 
