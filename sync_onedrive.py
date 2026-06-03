@@ -388,6 +388,7 @@ def run_rclone_sync(dry_run: bool = False):
     cmd = [
         'rclone', 'sync',
         f'{RCLONE_REMOTE}:{RCLONE_PATH}', str(TMP_DIR),
+        '--read-only',   # Schreibzugriff auf OneDrive verweigern
         '--progress',
         '--filter', '+ *.jpg', '--filter', '+ *.jpeg',
         '--filter', '+ *.png', '--filter', '+ *.bmp',
@@ -410,13 +411,9 @@ def run_rclone_sync(dry_run: bool = False):
 
 
 def push_excluded_back():
-    cmd = [
-        'rclone', 'copy', str(MEDIA_DIR),
-        f'{RCLONE_REMOTE}:{RCLONE_PATH}',
-        '--include', 'excluded.txt', '--progress',
-    ]
-    print('Übertrage excluded.txt-Dateien nach OneDrive …')
-    subprocess.run(cmd)
+    """Deaktiviert – rclone ist auf Lesezugriff konfiguriert (read-only)."""
+    print('Hinweis: --push-excluded ist deaktiviert (rclone read-only).')
+    print('excluded.txt-Dateien bleiben lokal auf dem Server.')
 
 # ---------------------------------------------------------------------------
 # Hauptprogramm
