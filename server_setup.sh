@@ -132,11 +132,15 @@ mkdir -p /etc/taf
 
 cat > /etc/taf/watchdog.conf <<'CONF'
 # Watchdog-Konfiguration
-# IP-Adressen der Raspberry Pis (eine pro Zeile)
+# IP-Adressen aller Geräte, die den Server wach halten (Pis + MacBook)
+# Server fährt herunter wenn KEINES dieser Geräte mehr erreichbar ist.
+# Hostnamen funktionieren auch (z.B. macbook.local)
 # Der Server fährt herunter wenn keiner dieser Hosts seit TIMEOUT Minuten erreichbar war.
 
-#192.168.1.102
-#192.168.1.105
+#192.168.1.102    # Pi 1
+#192.168.1.105    # Pi 2
+#192.168.1.110    # MacBook (feste IP oder DHCP-Reservierung empfohlen)
+#macbook.local    # Alternative: mDNS-Hostname
 
 TIMEOUT_MINUTES=15
 CONF
