@@ -60,6 +60,9 @@ echo "      ✓ Pakete installiert"
 echo "[2/5] Konfiguration anlegen..."
 mkdir -p /etc/taf
 
+# Vorhandene Konfiguration NICHT überschreiben (eingetragene Server-MAC/IP
+# bleiben erhalten, auch bei erneutem Ausführen nach einem Update).
+if [ ! -f /etc/taf/pi.conf ]; then
 cat > /etc/taf/pi.conf <<'CONF'
 # TaF Pi-Konfiguration
 # MAC-Adresse des Medienservers (Dell Optiplex) – für Wake-on-LAN
@@ -71,6 +74,10 @@ SERVER_IP="192.168.1.100"
 # Timeout in Sekunden: wie lange auf Server warten (0 = kein Warten)
 SERVER_WAIT_TIMEOUT=60
 CONF
+    echo "      ✓ /etc/taf/pi.conf angelegt (SERVER_MAC/IP noch eintragen!)"
+else
+    echo "      ✓ /etc/taf/pi.conf existiert bereits – bleibt unverändert"
+fi
 
 echo "      ✓ /etc/taf/pi.conf angelegt"
 echo "      → SERVER_MAC und SERVER_IP eintragen!"

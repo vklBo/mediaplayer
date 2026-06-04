@@ -141,6 +141,9 @@ echo "      → Geräte-ID notieren und mit Pi-IDs tauschen"
 echo "[5/6] Watchdog einrichten..."
 mkdir -p /etc/taf
 
+# Vorhandene Konfiguration NICHT überschreiben (eingetragene IPs bleiben erhalten,
+# auch wenn server_setup.sh nach einem Update erneut ausgeführt wird).
+if [ ! -f /etc/taf/watchdog.conf ]; then
 cat > /etc/taf/watchdog.conf <<'CONF'
 # Watchdog-Konfiguration
 # IP-Adressen aller Geräte, die den Server wach halten (Pis + MacBook)
@@ -155,6 +158,10 @@ cat > /etc/taf/watchdog.conf <<'CONF'
 
 TIMEOUT_MINUTES=15
 CONF
+    echo "      ✓ /etc/taf/watchdog.conf angelegt (IPs noch eintragen!)"
+else
+    echo "      ✓ /etc/taf/watchdog.conf existiert bereits – bleibt unverändert"
+fi
 
 # Watchdog-Script installieren
 cp "$(dirname "$0")/server_watchdog.sh" /usr/local/bin/taf_watchdog.sh
