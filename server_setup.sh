@@ -197,10 +197,34 @@ echo "[6/6] Sync-Boot-Service einrichten..."
 touch /var/log/taf_sync.log
 chown "$TAF_USER:$TAF_USER" /var/log/taf_sync.log
 
+# Update-Service: stellt das Repo beim Boot auf die neueste Release um.
+# Läuft VOR Sync und Web-UI, damit alle Dienste den neuen Code verwenden.
+cat > /etc/systemd/system/taf-update.service <<SERVICE
+[Unit]
+Description=TaF Update auf neueste Release (beim Boot)
+After=network-online.target
+Wants=network-online.target
+Before=taf-sync.service taf-qlab-web.service
+
+[Service]
+Type=oneshot
+User=$TAF_USER
+ExecStart=$SYNC_SCRIPT_DIR/update_to_release.sh
+RemainAfterExit=yes
+StandardOutput=append:/var/log/taf_sync.log
+StandardError=append:/var/log/taf_sync.log
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl enable taf-update.service
+echo "      ✓ Update-Service aktiviert (zieht neueste Release beim Boot)"
+
 cat > /etc/systemd/system/taf-sync.service <<SERVICE
 [Unit]
 Description=TaF OneDrive-Sync (startet nach dem Boot)
-After=network-online.target syncthing@${TAF_USER}.service
+After=network-online.target syncthing@${TAF_USER}.service taf-update.service
 Wants=network-online.target
 # Syncthing (Pi-Verteilung) hat Vorrang – Sync startet erst danach
 

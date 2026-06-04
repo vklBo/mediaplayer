@@ -176,6 +176,8 @@ echo "         (USB-Stick mit basismedien/ → wird automatisch an alle Pis vert
 
 echo "[5/5] mediaplayer-Service einrichten..."
 
+REPO_DIR="/home/$TAF_USER/mediaplayer"
+
 cat > /etc/systemd/system/taf_service.service <<SERVICE
 [Unit]
 Description=TaF Interaktiver Mediaplayer
@@ -189,7 +191,9 @@ User=$TAF_USER
 Environment=SDL_VIDEODRIVER=kmsdrm
 Environment=KIVY_WINDOW=sdl2
 Environment=XDG_RUNTIME_DIR=/run/user/1000
-ExecStart=python3 /home/$TAF_USER/mediaplayer_app.py
+# Vor dem Start auf die neueste Release umstellen (nur beim Start, nie blockierend)
+ExecStartPre=$REPO_DIR/update_to_release.sh
+ExecStart=python3 $REPO_DIR/mediaplayer_app.py
 Restart=on-failure
 RestartSec=10
 

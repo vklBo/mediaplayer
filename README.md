@@ -138,17 +138,18 @@ python3 ~/mediaplayer/sync_onedrive.py
 
 ## Einrichtung Raspberry Pi
 
-### 1. Dateien auf den Pi kopieren
+### 1. Repository auf den Pi klonen
 
 ```bash
-scp mediaplayer_app.py pi_setup.sh taf@<PI-IP>:~/
+ssh taf@<PI-IP>
+git clone https://github.com/vklBo/mediaplayer.git
+cd mediaplayer
 ```
 
 ### 2. Setup-Script ausführen
 
 ```bash
-ssh taf@<PI-IP>
-sudo bash ~/pi_setup.sh
+sudo bash ~/mediaplayer/pi_setup.sh
 ```
 
 Installiert: syncthing, wakeonlan, kivy, pillow  
@@ -449,6 +450,49 @@ SERVER_WAIT_TIMEOUT=60
 
 ---
 
+## Releases / Automatische Updates
+
+Server und Pis stellen **beim Start** automatisch auf die neueste Release um
+(nicht zwischendurch). Eine Release ist ein Git-Tag der Form `vX.Y.Z`.
+
+### Neue Release veröffentlichen (am Entwicklungsrechner)
+
+```bash
+# Änderungen committen und pushen
+git commit -am "..."
+git push
+
+# Release-Tag setzen und pushen
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+Beim nächsten Neustart ziehen Server und Pis automatisch `v1.1.0`.
+
+### Wie es funktioniert
+
+- `update_to_release.sh` läuft beim Boot (Server: `taf-update.service`,
+  Pi: `ExecStartPre` im mediaplayer-Service)
+- Es holt die Tags, ermittelt das höchste `v*`-Tag und checkt es aus
+- Bricht den Start **nie** ab: kein Netz / keine Tags / lokale Änderungen
+  → die aktuell installierte Version läuft weiter
+- Lokale Konfig (`excluded_folders.txt`, `genres.txt`, rclone-Config,
+  `/etc/taf/*`) bleibt unberührt
+
+### Manuell aktualisieren (ohne Neustart)
+
+```bash
+cd ~/mediaplayer && ./update_to_release.sh
+sudo systemctl restart taf_service.service      # Pi
+sudo systemctl restart taf-sync.service         # Server (oder neu syncen)
+```
+
+> Hinweis: Ändert eine Release die systemd-`.service`-Dateien selbst, greift das
+> erst nach erneutem `sudo bash server_setup.sh` bzw. `pi_setup.sh` (systemd lädt
+> Unit-Dateien nicht automatisch neu). Code-Änderungen greifen dagegen sofort.
+
+---
+
 ## Logs und Diagnose
 
 ```bash
@@ -522,5 +566,6 @@ journalctl -u taf-wol.service
 | `server_setup.sh` | Server | Einmalige Einrichtung des Dell Optiplex |
 | `server_watchdog.sh` | Server | Automatischer Shutdown wenn keine Geräte aktiv |
 | `pi_setup.sh` | Pi | Einmalige Einrichtung eines Raspberry Pi |
+| `update_to_release.sh` | Server + Pi | Beim Start auf neueste Release (Git-Tag) umstellen |
 | `mac_wol.sh` | MacBook | Server per WoL wecken (perl, kein Python nötig) |
 | `mac_wol_setup.sh` | MacBook | launchd-Agent für automatischen WoL einrichten |
