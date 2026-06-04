@@ -22,6 +22,7 @@
 #   Diese Dateien werden per sync_onedrive.py --push-excluded zurück nach OneDrive übertragen.
 
 import os
+import random
 import threading
 import shutil
 import time
@@ -431,6 +432,15 @@ def has_subfolders(folder: Path) -> bool:
     return any(f.is_dir() for f in folder.iterdir())
 
 
+def get_all_production_images() -> list:
+    """Alle (nicht ausgeschlossenen) Bilder aller Produktionen aus MEDIA_DIR, zufällig gemischt."""
+    bilder = []
+    for prod in iter_produktionen():
+        bilder.extend(get_image_files(prod))
+    random.shuffle(bilder)
+    return bilder
+
+
 def get_grundstock_images() -> list:
     """Alle Grundstock-Bilder aus BASIS_DIR."""
     if not BASIS_DIR.exists():
@@ -836,6 +846,10 @@ class SpielsaisonScreen(Screen):
             color=(0.4, 0.8, 1, 1),
         )
         header.add_widget(app._sync_label)
+        btn_alle = Button(text='▶ Alle Bilder', size_hint=(None, 1), width=180, font_size='18sp',
+                          background_color=(0.2, 0.5, 0.2, 1))
+        btn_alle.bind(on_press=self._show_all)
+        header.add_widget(btn_alle)
         # Genre-Button nur zeigen, wenn überhaupt Genres vergeben sind
         if build_genre_index():
             btn_genre = Button(text='🎭 Genres', size_hint=(None, 1), width=150, font_size='18sp')
@@ -877,6 +891,14 @@ class SpielsaisonScreen(Screen):
     def _open(self, saison_path: Path):
         self.manager.get_screen('produktionen').load(saison_path)
         _go_to(self.manager, 'produktionen')
+
+    def _show_all(self, *args):
+        bilder = get_all_production_images()
+        if bilder:
+            self.manager.get_screen('slideshow').load_images(
+                bilder, 'Alle Bilder', back_target='spielsaison'
+            )
+            _go_to(self.manager, 'slideshow')
 
     def _enter_kuration(self, *args):
         def _open():
@@ -1049,8 +1071,10 @@ class SlideshowScreen(Screen):
         """Diashow aus einer beliebigen Bilderliste (z.B. genreübergreifend)."""
         self._prod_name    = title
         self._back_target  = back_target
+        shuffled           = list(images)
+        random.shuffle(shuffled)
         grundstock         = get_grundstock_images()
-        self._images       = interleave_grundstock(list(images), grundstock, GRUNDSTOCK_INTERVAL)
+        self._images       = interleave_grundstock(shuffled, grundstock, GRUNDSTOCK_INTERVAL)
         self._index        = 0
         self._deactivate_quick_kuration()
         self._show()
@@ -1741,11 +1765,15 @@ class MediaplayerApp(App):
 
     def _try_autostart(self, dt):
         config = load_autostart()
-        if config is None:
-            return
         sm = self.root
         slideshow = sm.get_screen('slideshow')
-        if config.get('type') == 'genre':
+        if config is None:
+            # Kein Autostart konfiguriert → alle Bilder zufällig anzeigen
+            bilder = get_all_production_images()
+            if bilder:
+                slideshow.load_images(bilder, 'Alle Bilder', back_target='spielsaison')
+                _go_to(sm, 'slideshow')
+        elif config.get('type') == 'genre':
             index = build_genre_index()
             bilder = bilder_fuer_genre(index, config['path'])
             if bilder:
