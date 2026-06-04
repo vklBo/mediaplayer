@@ -76,6 +76,13 @@ GRID_PADDING       = 20
 GRID_SPACING       = 16
 KURATION_COLS      = 6       # Spalten im Bild-Kurationsmodus
 
+# Qualitätsschwellwerte – müssen mit sync_onedrive.py übereinstimmen.
+# flagged wird beim Laden dynamisch neu berechnet, damit Schwellwert-Änderungen
+# sofort wirken ohne alle quality_scores.json neu generieren zu müssen.
+SHARPNESS_LOW    = 80    # Laplacian-Varianz < Wert → unscharf
+NOISE_THRESHOLD  = 9.0   # Immerkaer-Sigma > Wert → verrauscht
+DARK_IMAGE_RATIO = 0.05  # < 5 % helle Pixel → zu dunkel
+
 IMAGE_EXTS   = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif'}
 ALLOWED_EXTS = IMAGE_EXTS | {'.mp4', '.avi', '.mkv', '.mov'}
 
@@ -405,14 +412,40 @@ def get_all_image_files(folder: Path) -> list:
     return sorted(f for f in folder.rglob('*') if f.suffix.lower() in IMAGE_EXTS)
 
 
+def _recompute_flagged(scores: dict) -> dict:
+    """
+    Berechnet 'flagged' für jeden Eintrag neu anhand der aktuellen Schwellwerte.
+    Duplikat-Flags (reason enthält 'Duplikat') bleiben erhalten.
+    """
+    result = {}
+    for name, q in scores.items():
+        q = dict(q)
+        is_duplicate = 'Duplikat' in q.get('reason', '')
+        if not is_duplicate:
+            sharpness  = q.get('sharpness', -1)
+            noise      = q.get('noise', -1)
+            brightness = q.get('brightness', -1)
+            reasons = []
+            if sharpness >= 0 and sharpness < SHARPNESS_LOW:
+                reasons.append('unscharf')
+            if noise >= 0 and noise > NOISE_THRESHOLD:
+                reasons.append('verrauscht')
+            if 0 <= brightness < DARK_IMAGE_RATIO:
+                reasons.append('zu dunkel')
+            q['flagged'] = bool(reasons)
+            q['reason']  = ', '.join(reasons) if reasons else ''
+        result[name] = q
+    return result
+
+
 def load_quality_scores(folder: Path) -> dict:
-    """Lädt quality_scores.json aus einem Produktionsordner (vom Server via Syncthing)."""
+    """Lädt quality_scores.json und berechnet flagged anhand aktueller Schwellwerte neu."""
     score_file = folder / 'quality_scores.json'
     if not score_file.exists():
         return {}
     try:
-        import json
-        return json.loads(score_file.read_text(encoding='utf-8'))
+        scores = json.loads(score_file.read_text(encoding='utf-8'))
+        return _recompute_flagged(scores)
     except Exception:
         return {}
 
