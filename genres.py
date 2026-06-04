@@ -11,11 +11,11 @@
 #
 # Quelle der Wahrheit: genre.txt in jedem Produktionsordner (ein Genre pro Zeile).
 # Diese werden per Syncthing an die Pis verteilt und vom Sync erhalten.
-# Zur bequemen Bearbeitung dient die zentrale Datei /srv/genres.txt.
+# Zur bequemen Bearbeitung dient die zentrale Datei genres.txt (neben diesem Skript).
 #
 # Ablauf:
-#   python3 genres.py scan     # /srv/genres.txt aus vorhandenen Produktionen erzeugen
-#   nano /srv/genres.txt       # Genres eintragen
+#   python3 genres.py scan     # genres.txt aus vorhandenen Produktionen erzeugen
+#   nano genres.txt            # Genres eintragen
 #   python3 genres.py apply    # genre.txt in jeden Produktionsordner schreiben
 #   python3 genres.py list     # aktuelle Zuordnung + Genre-Baum anzeigen
 # =============================================================================
