@@ -1161,7 +1161,7 @@ class KurationSaisonScreen(Screen):
                               self.manager)
         root.add_widget(header)
         root.add_widget(Label(
-            text='Spielzeit antippen → Produktionen und Bilder kurationieren',
+            text='Spielzeit antippen → Produktionen und Bilder kuratieren',
             size_hint=(1, None), height=36, font_size='14sp',
             color=(0.8, 0.8, 0.4, 1),
         ))
@@ -1456,7 +1456,7 @@ class KurationSubordnerScreen(Screen):
             '← Zurück', self._back_screen, self.manager,
         ))
         root.add_widget(Label(
-            text='Unterordner: "Bilder →" kurationieren  |  "✗" ganzen Unterordner ausschließen',
+            text='Unterordner: "Bilder →" kuratieren  |  "✗" ganzen Unterordner ausschließen',
             size_hint=(1, None), height=34, font_size='13sp',
             color=(0.8, 0.8, 0.4, 1),
         ))
