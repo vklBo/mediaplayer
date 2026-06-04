@@ -40,6 +40,7 @@ import platform
 if platform.system() == 'Linux':
     os.environ.setdefault('KIVY_WINDOW', 'sdl2')
     os.environ.setdefault('SDL_VIDEODRIVER', 'kmsdrm')
+    os.environ.setdefault('SDL_MOUSE_RELATIVE', '0')  # Mauszeiger im KMS/DRM-Modus anzeigen
 
 from kivy.app import App                                                    # noqa: E402
 from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition  # noqa: E402
@@ -1719,6 +1720,7 @@ class MediaplayerApp(App):
 
     def build(self):
         Window.fullscreen = 'auto'
+        Window.show_cursor = True
         sm = ScreenManager()
         sm.add_widget(SpielsaisonScreen(name='spielsaison'))
         sm.add_widget(ProduktionenScreen(name='produktionen'))
