@@ -33,7 +33,7 @@ import xml.etree.ElementTree as ET
 import json
 from datetime import datetime
 from pathlib import Path
-from PIL import Image as PILImage
+from PIL import Image as PILImage, ImageOps as PILImageOps
 
 # Auf dem Raspberry Pi KMS/DRM nutzen (kein X-Server nötig).
 # Auf dem Mac/PC läuft Kivy im nativen Fenster – keine Overrides nötig.
@@ -344,6 +344,12 @@ def bilder_fuer_genre(genre_index: dict, genre_prefix: str) -> list:
 # Thumbnail-Hilfsfunktionen
 # ---------------------------------------------------------------------------
 
+def _open_corrected(img_path: Path) -> PILImage.Image:
+    """Öffnet ein Bild und korrigiert die EXIF-Orientierung automatisch."""
+    img = PILImage.open(img_path)
+    return PILImageOps.exif_transpose(img)
+
+
 def make_thumbnail(folder: Path) -> str:
     """Ordner-Thumbnail (erstes Bild im Ordner); gecacht in THUMB_DIR."""
     dest = THUMB_DIR / f"{folder.parent.name}__{folder.name}.jpg"
@@ -353,7 +359,7 @@ def make_thumbnail(folder: Path) -> str:
         if img_file.suffix.lower() not in IMAGE_EXTS:
             continue
         try:
-            img = PILImage.open(img_file)
+            img = _open_corrected(img_file)
             img.thumbnail(THUMB_SIZE)
             img.convert('RGB').save(str(dest), 'JPEG')
             return str(dest)
@@ -369,7 +375,7 @@ def make_image_thumbnail(img_path: Path) -> str:
     if dest.exists():
         return str(dest)
     try:
-        img = PILImage.open(img_path)
+        img = _open_corrected(img_path)
         img.thumbnail(KURATION_THUMB_SIZE)
         img.convert('RGB').save(str(dest), 'JPEG')
         return str(dest)
