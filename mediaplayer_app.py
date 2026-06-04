@@ -396,14 +396,17 @@ def invalidate_thumbnails():
             f.unlink(missing_ok=True)
 
 
-def get_image_files(folder: Path) -> list:
-    """Alle Bilder im Ordner, ohne ausgeschlossene Dateien / Ordner."""
+def get_image_files(folder: Path, skip_flagged: bool = True) -> list:
+    """Alle Bilder im Ordner, ohne ausgeschlossene und (optional) geflaggte Dateien."""
     excluded = load_excluded(folder)
     if '*' in excluded:
         return []
+    scores = load_quality_scores(folder) if skip_flagged else {}
     return sorted(
         f for f in folder.rglob('*')
-        if f.suffix.lower() in IMAGE_EXTS and f.name not in excluded
+        if f.suffix.lower() in IMAGE_EXTS
+        and f.name not in excluded
+        and not (skip_flagged and scores.get(f.name, {}).get('flagged'))
     )
 
 
