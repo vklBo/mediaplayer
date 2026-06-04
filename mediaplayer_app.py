@@ -63,6 +63,7 @@ THUMB_DIR     = Path.home() / '.thumbs'
 USB_BASE_PATH = Path('/media/taf')
 
 KURATION_PIN        = '1313'  # PIN für den Kurationsmodus – hier ändern
+AUTOSTART_FILE      = Path.home() / '.mediaplayer_autostart.json'
 SLIDESHOW_INTERVAL  = 5       # Sekunden pro Bild
 GRUNDSTOCK_INTERVAL = 15       # Jedes N-te Bild in der Diashow ist ein Grundstock-Bild
                                # (0 = Grundstock deaktiviert)
@@ -93,6 +94,37 @@ def _log_kuration(entries: list):
                 f.write(json.dumps(entry, ensure_ascii=False) + '\n')
     except Exception as e:
         print(f'Kuration-Log fehlgeschlagen: {e}')
+
+# ---------------------------------------------------------------------------
+# Autostart-Konfiguration
+# ---------------------------------------------------------------------------
+
+def load_autostart() -> dict | None:
+    """Gibt {'type': 'genre', 'path': '...'} oder {'type': 'folder', 'saison': ..., 'produktion': ...} zurück."""
+    if not AUTOSTART_FILE.exists():
+        return None
+    try:
+        return json.loads(AUTOSTART_FILE.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+
+
+def save_autostart(config: dict | None):
+    if config is None:
+        AUTOSTART_FILE.unlink(missing_ok=True)
+    else:
+        AUTOSTART_FILE.write_text(json.dumps(config, ensure_ascii=False), encoding='utf-8')
+
+
+def autostart_label(config: dict | None) -> str:
+    if config is None:
+        return 'Kein Autostart'
+    if config.get('type') == 'genre':
+        return f'🎭 Genre: {config["path"]}'
+    if config.get('type') == 'folder':
+        return f'📁 {config["saison"]} / {config["produktion"]}'
+    return 'Kein Autostart'
+
 
 # ---------------------------------------------------------------------------
 # Syncthing-Status
@@ -811,6 +843,10 @@ class SpielsaisonScreen(Screen):
         btn_kuration = Button(text='✏ Kuration', size_hint=(None, 1), width=160, font_size='18sp')
         btn_kuration.bind(on_press=self._enter_kuration)
         header.add_widget(btn_kuration)
+        btn_autostart = Button(text='⚙', size_hint=(None, 1), width=56, font_size='22sp',
+                               background_color=(0.25, 0.25, 0.4, 1))
+        btn_autostart.bind(on_press=lambda *a: self._enter_autostart())
+        header.add_widget(btn_autostart)
         root.add_widget(header)
 
         scroll = ScrollView()
@@ -846,6 +882,9 @@ class SpielsaisonScreen(Screen):
             self.manager.get_screen('kuration_saison').build()
             _go_to(self.manager, 'kuration_saison')
         PinPopup(on_success=_open).open()
+
+    def _enter_autostart(self, *args):
+        self.manager.get_screen('autostart').open()
 
     def _enter_genres(self, *args):
         self.manager.get_screen('genre').load(prefix='', back_target='spielsaison')
@@ -959,6 +998,9 @@ class ProduktionenScreen(Screen):
         _go_to(self.manager, 'slideshow')
 
 
+QUICK_KURATION_TIMEOUT = 60  # Sekunden bis Auto-Deaktivierung
+
+
 class SlideshowScreen(Screen):
     """Ebene 3: Bilder einer Produktion als Diashow."""
 
@@ -969,6 +1011,8 @@ class SlideshowScreen(Screen):
         self._timer = None
         self._prod_name = ''
         self._back_target = 'produktionen'
+        self._quick_kuration = False
+        self._kuration_timeout = None
 
         root = BoxLayout(orientation='vertical')
         self._img = KivyImage(allow_stretch=True, keep_ratio=True)
@@ -982,10 +1026,16 @@ class SlideshowScreen(Screen):
         btn_prev.bind(on_press=self._prev)
         btn_next.bind(on_press=self._next)
         self._info = Label(font_size='16sp')
+        self._btn_kuration = Button(
+            text='✗', size_hint=(None, 1), width=60, font_size='22sp',
+            background_color=(0.35, 0.35, 0.35, 1),
+        )
+        self._btn_kuration.bind(on_press=self._kuration_press)
         bar.add_widget(btn_back)
         bar.add_widget(btn_prev)
         bar.add_widget(self._info)
         bar.add_widget(btn_next)
+        bar.add_widget(self._btn_kuration)
         root.add_widget(bar)
         self.add_widget(root)
 
@@ -1001,6 +1051,7 @@ class SlideshowScreen(Screen):
         grundstock         = get_grundstock_images()
         self._images       = interleave_grundstock(list(images), grundstock, GRUNDSTOCK_INTERVAL)
         self._index        = 0
+        self._deactivate_quick_kuration()
         self._show()
 
     def on_enter(self, *args):
@@ -1010,6 +1061,7 @@ class SlideshowScreen(Screen):
         if self._timer:
             self._timer.cancel()
             self._timer = None
+        self._deactivate_quick_kuration()
 
     def _show(self):
         if not self._images:
@@ -1021,6 +1073,9 @@ class SlideshowScreen(Screen):
             self._info.text = '★ Unsere Förderer'
         else:
             self._info.text = f'{self._prod_name}  –  {self._index + 1} / {len(self._images)}'
+        # Ausblenden-Button nur bei kurationierbaren Bildern zeigen
+        self._btn_kuration.opacity = 0 if current.is_relative_to(BASIS_DIR) else 1
+        self._btn_kuration.disabled = current.is_relative_to(BASIS_DIR)
 
     def _advance(self, dt):
         if self._images:
@@ -1036,6 +1091,58 @@ class SlideshowScreen(Screen):
         if self._images:
             self._index = (self._index + 1) % len(self._images)
             self._show()
+
+    # --- Quick-Kuration ---
+
+    def _kuration_press(self, *args):
+        if self._quick_kuration:
+            self._exclude_current()
+        else:
+            PinPopup(on_success=self._activate_quick_kuration).open()
+
+    def _activate_quick_kuration(self):
+        self._quick_kuration = True
+        self._btn_kuration.background_color = (0.75, 0.15, 0.15, 1)
+        self._btn_kuration.text = '✗ ausblenden'
+        self._btn_kuration.width = 160
+        self._reset_kuration_timeout()
+
+    def _deactivate_quick_kuration(self):
+        self._quick_kuration = False
+        if self._kuration_timeout:
+            self._kuration_timeout.cancel()
+            self._kuration_timeout = None
+        self._btn_kuration.background_color = (0.35, 0.35, 0.35, 1)
+        self._btn_kuration.text = '✗'
+        self._btn_kuration.width = 60
+
+    def _reset_kuration_timeout(self):
+        if self._kuration_timeout:
+            self._kuration_timeout.cancel()
+        self._kuration_timeout = Clock.schedule_once(
+            lambda dt: self._deactivate_quick_kuration(), QUICK_KURATION_TIMEOUT
+        )
+
+    def _exclude_current(self):
+        if not self._images:
+            return
+        current = self._images[self._index]
+        if current.is_relative_to(BASIS_DIR):
+            return
+        # In excluded.txt eintragen
+        folder = current.parent
+        excluded = load_excluded(folder)
+        excluded.add(current.name)
+        save_excluded(folder, excluded)
+        # Aus der laufenden Liste entfernen (alle Vorkommen, z.B. durch Grundstock-Interleave)
+        self._images = [img for img in self._images if img != current]
+        if not self._images:
+            self._deactivate_quick_kuration()
+            self._show()
+            return
+        self._index = self._index % len(self._images)
+        self._show()
+        self._reset_kuration_timeout()
 
 
 # ---------------------------------------------------------------------------
@@ -1394,6 +1501,217 @@ class KurationSubordnerScreen(Screen):
 
 
 # ---------------------------------------------------------------------------
+# Autostart-Screen
+# ---------------------------------------------------------------------------
+
+class AutostartScreen(Screen):
+    """PIN-geschützter Screen zum Konfigurieren des automatischen Show-Starts."""
+
+    # _mode: None | 'genre' | 'folder'
+    # _genre_prefix: aktueller Pfad im Genre-Baum
+    # _saison_path: ausgewählte Saison im Folder-Modus
+
+    def open(self):
+        """Einstieg: PIN-Abfrage, dann Screen anzeigen."""
+        def _show():
+            self._mode = None
+            self._genre_prefix = ''
+            self._saison_path = None
+            self._build()
+            _go_to(self.manager, 'autostart')
+        PinPopup(on_success=_show).open()
+
+    def _build(self):
+        self.clear_widgets()
+        root = BoxLayout(orientation='vertical')
+
+        if self._mode is None:
+            root.add_widget(self._build_main())
+        elif self._mode == 'genre':
+            root.add_widget(self._build_genre())
+        elif self._mode == 'folder':
+            root.add_widget(self._build_folder())
+
+        self.add_widget(root)
+
+    # --- Hauptansicht ---
+
+    def _build_main(self) -> BoxLayout:
+        root = BoxLayout(orientation='vertical')
+        root.add_widget(make_header(
+            'Autostart konfigurieren', '✕ Schließen', 'spielsaison', self.manager,
+        ))
+
+        current = load_autostart()
+        root.add_widget(Label(
+            text=f'Aktuell: {autostart_label(current)}',
+            font_size='18sp', size_hint=(1, None), height=50,
+            color=(0.6, 0.9, 0.6, 1) if current else (0.6, 0.6, 0.6, 1),
+        ))
+
+        pad = BoxLayout(orientation='vertical', padding=30, spacing=20)
+
+        btn_none = Button(
+            text='✕  Kein Autostart (normaler Startbildschirm)',
+            font_size='18sp', size_hint=(1, None), height=70,
+            background_color=(0.35, 0.35, 0.35, 1),
+        )
+        btn_none.bind(on_press=lambda *a: self._set(None))
+
+        btn_genre = Button(
+            text='🎭  Genre auswählen …',
+            font_size='18sp', size_hint=(1, None), height=70,
+            background_color=(0.2, 0.45, 0.65, 1),
+        )
+        btn_genre.bind(on_press=lambda *a: self._enter_genre())
+
+        btn_folder = Button(
+            text='📁  Produktion auswählen …',
+            font_size='18sp', size_hint=(1, None), height=70,
+            background_color=(0.3, 0.5, 0.3, 1),
+        )
+        btn_folder.bind(on_press=lambda *a: self._enter_folder())
+
+        pad.add_widget(btn_none)
+        pad.add_widget(btn_genre)
+        pad.add_widget(btn_folder)
+        root.add_widget(pad)
+        return root
+
+    def _set(self, config: dict | None):
+        save_autostart(config)
+        self._mode = None
+        self._build()
+
+    # --- Genre-Modus ---
+
+    def _enter_genre(self):
+        self._mode = 'genre'
+        self._genre_prefix = ''
+        self._build()
+
+    def _build_genre(self) -> BoxLayout:
+        root = BoxLayout(orientation='vertical')
+        index = build_genre_index()
+
+        header = BoxLayout(size_hint=(1, None), height=70)
+        btn_back = Button(text='← Zurück', size_hint=(None, 1), width=160, font_size='18sp')
+        btn_back.bind(on_press=self._genre_back)
+        header.add_widget(btn_back)
+        titel = f'Genre: {self._genre_prefix}' if self._genre_prefix else 'Genre wählen'
+        header.add_widget(Label(text=titel, font_size='22sp'))
+        root.add_widget(header)
+
+        scroll = ScrollView()
+        grid = make_grid(TILE_COLS)
+
+        # "Diese Kategorie" – auf jeder Ebene mit Treffern wählbar
+        bilder_hier = bilder_fuer_genre(index, self._genre_prefix) if self._genre_prefix else []
+        if bilder_hier:
+            btn_this = Button(
+                text=f'▶ Diese Kategorie ({len(bilder_hier)} Bilder)',
+                font_size='16sp', size_hint=(1, None), height=60,
+                background_color=(0.2, 0.6, 0.25, 1),
+            )
+            btn_this.bind(on_press=lambda *a: self._set(
+                {'type': 'genre', 'path': self._genre_prefix}
+            ))
+            grid.add_widget(btn_this)
+
+        for kindname, vollpfad in genre_kinder(index, self._genre_prefix):
+            bilder = bilder_fuer_genre(index, vollpfad)
+            unterkinder = genre_kinder(index, vollpfad)
+            thumb = make_image_thumbnail(bilder[0]) if bilder else ''
+            if unterkinder:
+                label = f'{kindname}  ▸ ({len(bilder)})'
+                cb = lambda v=vollpfad: self._genre_drill(v)
+            else:
+                label = f'{kindname} ({len(bilder)})'
+                cb = lambda v=vollpfad: self._set({'type': 'genre', 'path': v})
+            grid.add_widget(Kachel(title=label, thumb_path=thumb, callback=cb))
+
+        scroll.add_widget(grid)
+        root.add_widget(scroll)
+        return root
+
+    def _genre_drill(self, vollpfad: str):
+        self._genre_prefix = vollpfad
+        self._build()
+
+    def _genre_back(self, *args):
+        if not self._genre_prefix:
+            self._mode = None
+        else:
+            self._genre_prefix = '/'.join(self._genre_prefix.split('/')[:-1])
+        self._build()
+
+    # --- Folder-Modus ---
+
+    def _enter_folder(self):
+        self._mode = 'folder'
+        self._saison_path = None
+        self._build()
+
+    def _build_folder(self) -> BoxLayout:
+        root = BoxLayout(orientation='vertical')
+
+        btn_back = Button(text='← Zurück', size_hint=(None, 1), width=160, font_size='18sp')
+        if self._saison_path is None:
+            btn_back.bind(on_press=lambda *a: self._folder_back_to_main())
+            titel = 'Spielzeit wählen'
+        else:
+            btn_back.bind(on_press=lambda *a: self._folder_back_to_saison())
+            titel = f'Produktion: {self._saison_path.name}'
+
+        header = BoxLayout(size_hint=(1, None), height=70)
+        header.add_widget(btn_back)
+        header.add_widget(Label(text=titel, font_size='22sp'))
+        root.add_widget(header)
+
+        scroll = ScrollView()
+        grid = make_grid(TILE_COLS)
+
+        if self._saison_path is None:
+            saisons = sorted(
+                (d for d in MEDIA_DIR.iterdir() if d.is_dir() and d.name != 'basismedien'),
+                reverse=True,
+            )
+            for saison in saisons:
+                grid.add_widget(Kachel(
+                    title=saison.name,
+                    thumb_path=make_thumbnail(saison),
+                    callback=lambda s=saison: self._folder_drill(s),
+                ))
+        else:
+            for prod in sorted(p for p in self._saison_path.iterdir() if p.is_dir()):
+                grid.add_widget(Kachel(
+                    title=prod.name,
+                    thumb_path=make_thumbnail(prod),
+                    callback=lambda p=prod: self._set({
+                        'type': 'folder',
+                        'saison': self._saison_path.name,
+                        'produktion': p.name,
+                    }),
+                ))
+
+        scroll.add_widget(grid)
+        root.add_widget(scroll)
+        return root
+
+    def _folder_drill(self, saison: Path):
+        self._saison_path = saison
+        self._build()
+
+    def _folder_back_to_saison(self):
+        self._saison_path = None
+        self._build()
+
+    def _folder_back_to_main(self):
+        self._mode = None
+        self._build()
+
+
+# ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
 
@@ -1410,12 +1728,32 @@ class MediaplayerApp(App):
         sm.add_widget(KurationProdScreen(name='kuration_prod'))
         sm.add_widget(KurationSubordnerScreen(name='kuration_subordner'))
         sm.add_widget(KurationBilderScreen(name='kuration_bilder'))
+        sm.add_widget(AutostartScreen(name='autostart'))
         return sm
 
     def on_start(self):
         self._sync_label = None
         threading.Thread(target=usb_monitor_loop,       args=(self,), daemon=True).start()
         threading.Thread(target=syncthing_monitor_loop, args=(self,), daemon=True).start()
+        Clock.schedule_once(self._try_autostart, 0.5)
+
+    def _try_autostart(self, dt):
+        config = load_autostart()
+        if config is None:
+            return
+        sm = self.root
+        slideshow = sm.get_screen('slideshow')
+        if config.get('type') == 'genre':
+            index = build_genre_index()
+            bilder = bilder_fuer_genre(index, config['path'])
+            if bilder:
+                slideshow.load_images(bilder, f'Genre: {config["path"]}', back_target='spielsaison')
+                _go_to(sm, 'slideshow')
+        elif config.get('type') == 'folder':
+            prod_path = MEDIA_DIR / config['saison'] / config['produktion']
+            if prod_path.is_dir():
+                slideshow.load(prod_path)
+                _go_to(sm, 'slideshow')
 
     def set_sync_status(self, text: str):
         """Setzt den Sync-Status-Text im Header (wird vom Monitor-Thread via Clock aufgerufen)."""
