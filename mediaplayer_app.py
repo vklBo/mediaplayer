@@ -423,8 +423,9 @@ def _recompute_flagged(scores: dict) -> dict:
     result = {}
     for name, q in scores.items():
         q = dict(q)
-        is_duplicate = 'Duplikat' in q.get('reason', '')
-        if not is_duplicate:
+        is_duplicate = 'Duplikat'   in q.get('reason', '')
+        is_damaged   = 'beschädigt' in q.get('reason', '')
+        if not is_duplicate and not is_damaged:
             sharpness  = q.get('sharpness', -1)
             noise      = q.get('noise', -1)
             brightness = q.get('brightness', -1)

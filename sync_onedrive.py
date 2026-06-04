@@ -307,7 +307,21 @@ def _process_folder(src: Path, dst: Path, stats: dict, dry_run: bool, prev: Path
             stats['unveraendert'] += 1
             q = vorh
         else:
-            # Neu oder geändert → optimieren und analysieren
+            # Neu oder geändert → Integrität prüfen, optimieren und analysieren
+            try:
+                with PILImage.open(img) as _chk:
+                    _chk.verify()
+            except Exception as e:
+                print(f'    Beschädigt, übersprungen ({img.name}): {e}')
+                q = {
+                    'sharpness': -1, 'brightness': -1, 'noise': -1,
+                    'flagged': True, 'reason': 'beschädigt',
+                    'src_mtime': src_mtime, 'src_size': src_size,
+                }
+                quality_scores[img.name] = q
+                stats['flagged'] += 1
+                stats['neu'] += 1
+                continue
             try:
                 stats['optimiert_bytes'] += optimize_image(img, dst_img)
             except Exception as e:
@@ -489,8 +503,9 @@ def retag():
         datei_geaendert = 0
         for name, q in scores.items():
             q = dict(q)
-            is_duplicate = 'Duplikat' in q.get('reason', '')
-            if not is_duplicate:
+            is_duplicate = 'Duplikat'   in q.get('reason', '')
+            is_damaged   = 'beschädigt' in q.get('reason', '')
+            if not is_duplicate and not is_damaged:
                 sharpness  = q.get('sharpness', -1)
                 noise      = q.get('noise', -1)
                 brightness = q.get('brightness', -1)
