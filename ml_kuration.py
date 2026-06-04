@@ -276,7 +276,7 @@ def bewerte_bild(bild_pfad: str):
     else:
         noise = 0.0
 
-    auto_flagged = int(sharpness < 35 or noise > 9.0 or bright_ratio < 0.05)
+    auto_flagged = int(sharpness < 80 or noise > 9.0 or bright_ratio < 0.05)
     X = np.array([[sharpness, noise, brightness, auto_flagged]])
 
     if 'Logistische' in name:
