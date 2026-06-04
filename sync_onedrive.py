@@ -524,8 +524,13 @@ def _swap_staging_to_media():
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
     neue_namen = {p.name for p in STAGING_DIR.iterdir()}
 
+    # Syncthing-interne Dateien/Ordner nie anfassen
+    SYNCTHING_PROTECTED = {'.stfolder', '.stignore', '.stversions'}
+
     # 1. Ordner, die es im Staging nicht mehr gibt, aus MEDIA_DIR entfernen
     for item in MEDIA_DIR.iterdir():
+        if item.name in SYNCTHING_PROTECTED:
+            continue
         if item.name not in neue_namen:
             if item.is_dir():
                 shutil.rmtree(item)
