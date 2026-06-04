@@ -1139,7 +1139,14 @@ class SlideshowScreen(Screen):
         if current.is_relative_to(BASIS_DIR):
             self._info.text = '★ Unsere Förderer'
         else:
-            self._info.text = f'{self._prod_name}  –  {self._index + 1} / {len(self._images)}'
+            # Spielzeit und Produktion aus dem Bildpfad ableiten
+            try:
+                rel = current.relative_to(MEDIA_DIR)
+                parts = rel.parts  # (saison, produktion, ..., datei)
+                ort = f'{parts[0]}  /  {parts[1]}' if len(parts) >= 2 else self._prod_name
+            except ValueError:
+                ort = self._prod_name
+            self._info.text = f'{ort}  –  {self._index + 1} / {len(self._images)}'
         # Ausblenden-Button nur bei kurationierbaren Bildern zeigen
         self._btn_kuration.opacity = 0 if current.is_relative_to(BASIS_DIR) else 1
         self._btn_kuration.disabled = current.is_relative_to(BASIS_DIR)
