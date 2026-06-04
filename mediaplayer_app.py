@@ -841,10 +841,10 @@ class SpielsaisonScreen(Screen):
             btn_genre = Button(text='🎭 Genres', size_hint=(None, 1), width=150, font_size='18sp')
             btn_genre.bind(on_press=self._enter_genres)
             header.add_widget(btn_genre)
-        btn_kuration = Button(text='✏ Kuration', size_hint=(None, 1), width=160, font_size='18sp')
+        btn_kuration = Button(text='Kuratieren', size_hint=(None, 1), width=160, font_size='18sp')
         btn_kuration.bind(on_press=self._enter_kuration)
         header.add_widget(btn_kuration)
-        btn_autostart = Button(text='⚙', size_hint=(None, 1), width=56, font_size='22sp',
+        btn_autostart = Button(text='Autostart', size_hint=(None, 1), width=140, font_size='18sp',
                                background_color=(0.25, 0.25, 0.4, 1))
         btn_autostart.bind(on_press=lambda *a: self._enter_autostart())
         header.add_widget(btn_autostart)
@@ -1157,7 +1157,7 @@ class KurationSaisonScreen(Screen):
         self.clear_widgets()
         root = BoxLayout(orientation='vertical')
 
-        header = make_header('Kuration: Spielzeiten', '✕ Schließen', 'spielsaison',
+        header = make_header('Kuratieren: Spielzeiten', '✕ Schließen', 'spielsaison',
                               self.manager)
         root.add_widget(header)
         root.add_widget(Label(
@@ -1212,7 +1212,7 @@ class KurationProdScreen(Screen):
         self.clear_widgets()
         root = BoxLayout(orientation='vertical')
         root.add_widget(make_header(
-            f'Kuration: {self._saison_path.name}',
+            f'Kuratieren: {self._saison_path.name}',
             '← Spielzeiten', 'kuration_saison', self.manager,
         ))
         root.add_widget(Label(
@@ -1452,7 +1452,7 @@ class KurationSubordnerScreen(Screen):
         self.clear_widgets()
         root = BoxLayout(orientation='vertical')
         root.add_widget(make_header(
-            f'Kuration: {self._folder.name}',
+            f'Kuratieren: {self._folder.name}',
             '← Zurück', self._back_screen, self.manager,
         ))
         root.add_widget(Label(
