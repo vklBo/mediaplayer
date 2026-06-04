@@ -16,6 +16,7 @@
 #   python3 sync_onedrive.py                  # Sync + Verarbeitung
 #   python3 sync_onedrive.py --push-excluded  # excluded.txt zurück nach OneDrive
 #   python3 sync_onedrive.py --no-sync        # Nur lokale Verarbeitung
+#   python3 sync_onedrive.py --retag          # flagged/reason neu berechnen (ohne Bildzugriff)
 
 import argparse
 import json
@@ -465,6 +466,59 @@ def push_excluded_back():
     print('Hinweis: --push-excluded ist deaktiviert (rclone read-only).')
     print('excluded.txt-Dateien bleiben lokal auf dem Server.')
 
+
+def retag():
+    """
+    Liest alle quality_scores.json in MEDIA_DIR und berechnet flagged/reason
+    anhand der aktuellen Schwellwerte neu – ohne Bilddateien anzufassen.
+    """
+    score_files = list(MEDIA_DIR.rglob('quality_scores.json'))
+    if not score_files:
+        print('Keine quality_scores.json gefunden.')
+        return
+
+    gesamt = geaendert = 0
+    for score_file in sorted(score_files):
+        try:
+            scores = json.loads(score_file.read_text(encoding='utf-8'))
+        except Exception as e:
+            print(f'  Fehler beim Lesen von {score_file}: {e}')
+            continue
+
+        neu = {}
+        datei_geaendert = 0
+        for name, q in scores.items():
+            q = dict(q)
+            is_duplicate = 'Duplikat' in q.get('reason', '')
+            if not is_duplicate:
+                sharpness  = q.get('sharpness', -1)
+                noise      = q.get('noise', -1)
+                brightness = q.get('brightness', -1)
+                reasons = []
+                if sharpness >= 0 and sharpness < SHARPNESS_LOW:
+                    reasons.append('unscharf')
+                if noise >= 0 and noise > NOISE_THRESHOLD:
+                    reasons.append('verrauscht')
+                if 0 <= brightness < DARK_IMAGE_RATIO:
+                    reasons.append('zu dunkel')
+                new_flagged = bool(reasons)
+                new_reason  = ', '.join(reasons) if reasons else ''
+                if new_flagged != q.get('flagged') or new_reason != q.get('reason', ''):
+                    datei_geaendert += 1
+                q['flagged'] = new_flagged
+                q['reason']  = new_reason
+            neu[name] = q
+            gesamt += 1
+
+        score_file.write_text(json.dumps(neu, ensure_ascii=False, indent=2), encoding='utf-8')
+        rel = score_file.relative_to(MEDIA_DIR)
+        if datei_geaendert:
+            print(f'  {rel.parent}: {datei_geaendert} Einträge aktualisiert')
+        geaendert += datei_geaendert
+
+    print(f'\nFertig: {gesamt} Bilder geprüft, {geaendert} Flags aktualisiert.')
+    print('Syncthing verteilt die aktualisierten quality_scores.json automatisch.')
+
 # ---------------------------------------------------------------------------
 # Hauptprogramm
 # ---------------------------------------------------------------------------
@@ -479,6 +533,8 @@ def main():
                         help='rclone überspringen')
     parser.add_argument('--push-excluded', action='store_true',
                         help='excluded.txt zurück nach OneDrive')
+    parser.add_argument('--retag', action='store_true',
+                        help='flagged/reason in quality_scores.json neu berechnen (ohne Bildzugriff)')
     args = parser.parse_args()
 
     if args.list_folders:
@@ -487,6 +543,10 @@ def main():
 
     if args.push_excluded:
         push_excluded_back()
+        return
+
+    if args.retag:
+        retag()
         return
 
     # Lock-Datei mit eigener PID setzen – der Watchdog prüft, ob dieser
