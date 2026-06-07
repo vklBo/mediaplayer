@@ -65,7 +65,8 @@ THUMB_DIR     = Path.home() / '.thumbs'
 USB_BASE_PATH = Path('/media/taf')
 
 KURATION_PIN        = '1313'  # PIN für den Kurationsmodus – hier ändern
-AUTOSTART_FILE      = Path.home() / '.mediaplayer_autostart.json'
+AUTOSTART_FILE        = Path.home() / '.mediaplayer_autostart.json'
+AUTOSTART_CONFIG_FILE = MEDIA_DIR / 'konfiguration' / 'autostart_config.txt'
 SLIDESHOW_INTERVAL  = 5       # Sekunden pro Bild
 GRUNDSTOCK_INTERVAL = 15       # Jedes N-te Bild in der Diashow ist ein Grundstock-Bild
                                # (0 = Grundstock deaktiviert)
@@ -108,14 +109,60 @@ def _log_kuration(entries: list):
 # Autostart-Konfiguration
 # ---------------------------------------------------------------------------
 
-def load_autostart() -> dict | None:
-    """Gibt {'type': 'genre', 'path': '...'} oder {'type': 'folder', 'saison': ..., 'produktion': ...} zurück."""
-    if not AUTOSTART_FILE.exists():
+def _parse_autostart_config_txt(hostname: str) -> dict | None:
+    """
+    Liest autostart_config.txt (von OneDrive per Syncthing verteilt).
+    Format:
+        # Kommentar
+        pi4 = genre:JungesEnsemble/Kinder
+        pi5 = folder:2024-25/Faust
+        * = genre:Drama          # Fallback für alle nicht explizit genannten Pis
+    """
+    if not AUTOSTART_CONFIG_FILE.exists():
         return None
     try:
-        return json.loads(AUTOSTART_FILE.read_text(encoding='utf-8'))
+        fallback = None
+        for line in AUTOSTART_CONFIG_FILE.read_text(encoding='utf-8').splitlines():
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if '=' not in line:
+                continue
+            key, _, value = line.partition('=')
+            key   = key.strip()
+            value = value.split('#')[0].strip()  # Inline-Kommentare entfernen
+            if key == hostname:
+                return _parse_autostart_value(value)
+            if key == '*':
+                fallback = _parse_autostart_value(value)
+        return fallback
     except Exception:
         return None
+
+
+def _parse_autostart_value(value: str) -> dict | None:
+    """Parst 'genre:Pfad/Hier' oder 'folder:2024-25/Faust' → dict."""
+    if value.startswith('genre:'):
+        return {'type': 'genre', 'path': value[6:]}
+    if value.startswith('folder:'):
+        parts = value[7:].split('/', 1)
+        if len(parts) == 2:
+            return {'type': 'folder', 'saison': parts[0], 'produktion': parts[1]}
+    return None
+
+
+def load_autostart() -> dict | None:
+    """
+    Lädt Autostart-Konfiguration.
+    Priorität: 1. lokale Einstellung (⚙-Button) 2. zentrale autostart_config.txt
+    """
+    if AUTOSTART_FILE.exists():
+        try:
+            return json.loads(AUTOSTART_FILE.read_text(encoding='utf-8'))
+        except Exception:
+            pass
+    import socket
+    return _parse_autostart_config_txt(socket.gethostname())
 
 
 def save_autostart(config: dict | None):
@@ -1617,12 +1664,37 @@ class AutostartScreen(Screen):
             'Autostart konfigurieren', '✕ Schließen', 'spielsaison', self.manager,
         ))
 
-        current = load_autostart()
+        import socket
+        hostname = socket.gethostname()
+        local    = AUTOSTART_FILE.exists()
+        central  = _parse_autostart_config_txt(hostname)
+        current  = load_autostart()
+
+        if local:
+            quelle = f'Lokale Einstellung auf {hostname}'
+            farbe  = (0.6, 0.9, 0.6, 1)
+        elif central:
+            quelle = f'Zentral (OneDrive) für {hostname}'
+            farbe  = (0.6, 0.8, 1.0, 1)
+        else:
+            quelle = 'Keine Einstellung – alle Bilder'
+            farbe  = (0.6, 0.6, 0.6, 1)
+
         root.add_widget(Label(
-            text=f'Aktuell: {autostart_label(current)}',
-            font_size='18sp', size_hint=(1, None), height=50,
-            color=(0.6, 0.9, 0.6, 1) if current else (0.6, 0.6, 0.6, 1),
+            text=f'{autostart_label(current)}\n{quelle}',
+            font_size='17sp', size_hint=(1, None), height=64,
+            halign='center', color=farbe,
         ))
+
+        # Button zum Zurücksetzen auf zentrale Einstellung (nur wenn lokal überschrieben)
+        if local and central:
+            btn_reset = Button(
+                text=f'↩ Zentrale Einstellung übernehmen ({autostart_label(central)})',
+                font_size='15sp', size_hint=(1, None), height=50,
+                background_color=(0.3, 0.3, 0.5, 1),
+            )
+            btn_reset.bind(on_press=lambda *a: self._reset_to_central())
+            root.add_widget(btn_reset)
 
         pad = BoxLayout(orientation='vertical', padding=30, spacing=20)
 
@@ -1654,7 +1726,13 @@ class AutostartScreen(Screen):
         return root
 
     def _set(self, config: dict | None):
-        save_autostart(config)
+        save_autostart(config)   # speichert als lokale Einstellung (Vorrang vor OneDrive)
+        self._mode = None
+        self._build()
+
+    def _reset_to_central(self):
+        """Lokale Einstellung löschen – zentrale OneDrive-Einstellung gilt wieder."""
+        AUTOSTART_FILE.unlink(missing_ok=True)
         self._mode = None
         self._build()
 

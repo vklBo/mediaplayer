@@ -37,6 +37,8 @@ RCLONE_PATH    = 'Fotos'             # Pfad in OneDrive/SharePoint
 MEDIA_DIR      = Path('/srv/media')  # Ziel (wird per Syncthing verteilt)
 STAGING_DIR    = Path('/srv/media_staging')  # Zwischenstufe – wird erst bei Erfolg umgeschaltet
 TMP_DIR        = Path.home() / '.media_sync_tmp'
+KONFIGURATION_DIR = MEDIA_DIR / 'konfiguration'  # Syncthing verteilt diesen Ordner an die Pis
+RCLONE_KONFIG_PATH = f'{RCLONE_PATH}/Konfiguration'  # Pfad in OneDrive
 
 EXCLUDED_FOLDERS_FILE = Path(__file__).parent / 'excluded_folders.txt'
 
@@ -626,10 +628,34 @@ def _swap_staging_to_media():
     _clear_contents(STAGING_DIR)
 
 
+def sync_konfiguration(dry_run: bool = False):
+    """
+    Holt Konfiguration/autostart_config.txt von OneDrive nach /srv/media/konfiguration/.
+    OneDrive ist die einzige Quelle der Wahrheit – lokale Dateien werden überschrieben.
+    """
+    KONFIGURATION_DIR.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        'rclone', 'sync',
+        f'{RCLONE_REMOTE}:{RCLONE_KONFIG_PATH}',
+        str(KONFIGURATION_DIR),
+        '--filter', '+ autostart_config.txt',
+        '--filter', '- *',
+    ]
+    if dry_run:
+        cmd.append('--dry-run')
+    print(f'\nSynce Konfiguration von OneDrive:{RCLONE_KONFIG_PATH} → {KONFIGURATION_DIR} …')
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f'  Konfiguration-Sync fehlgeschlagen: {result.stderr.strip()}')
+    else:
+        print(f'  ✓ Konfiguration aktualisiert')
+
+
 def _run_sync(args):
     if not args.no_sync:
         TMP_DIR.mkdir(exist_ok=True)
         run_rclone_sync(dry_run=args.dry_run)
+        sync_konfiguration(dry_run=args.dry_run)
 
     if args.dry_run:
         print(f'\nVorschau: {TMP_DIR} → {MEDIA_DIR}')
