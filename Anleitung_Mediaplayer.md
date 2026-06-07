@@ -134,3 +134,34 @@ Der Autostart legt fest, welche Diashow beim nächsten Einschalten automatisch s
 | **📁 Produktion auswählen** | Spielzeit und dann Produktion antippen |
 
 Die Einstellung wird sofort gespeichert und gilt ab dem nächsten Start.
+
+Unterhalb der Auswahlbuttons wird angezeigt, welche Einstellung gerade aktiv ist und woher sie stammt:
+- *Lokale Einstellung auf pi4* – am Gerät selbst gesetzt, hat Vorrang
+- *Zentral (OneDrive) für pi4* – aus der zentralen Konfigurationsdatei
+- *Keine Einstellung – alle Bilder* – kein Autostart konfiguriert
+
+Ist eine lokale Einstellung aktiv und gleichzeitig eine zentrale vorhanden, erscheint zusätzlich der Button **↩ Zentrale Einstellung übernehmen** – damit wird die lokale Überschreibung gelöscht und die OneDrive-Vorgabe gilt wieder.
+
+---
+
+## 10.  Zentrale Autostart-Konfiguration (für Administratoren)
+
+Die Intendanz kann den Autostart für alle Displays zentral über OneDrive steuern, ohne die Geräte vor Ort zu bedienen.
+
+**Datei anlegen:** `Fotos/Konfiguration/autostart_config.txt` in OneDrive mit folgendem Inhalt:
+
+```
+# Autostart-Konfiguration pro Display
+# Hostname = Einstellung
+pi4 = genre:JungesEnsemble/Kinder
+pi5 = folder:2024-25/Faust
+* = genre:Drama
+```
+
+**Format:**
+- `hostname = genre:Kategorie/Unterkategorie` – startet ein Genre (inkl. Unterkategorien)
+- `hostname = folder:Spielzeit/Produktion` – startet eine bestimmte Produktion
+- `*` als Hostname = Fallback für alle Displays ohne eigenen Eintrag
+- Zeilen mit `#` sind Kommentare
+
+Die Datei wird beim nächsten Sync-Lauf automatisch auf alle Displays übertragen. Eine am Display selbst gesetzte Einstellung (Abschnitt 9) hat immer Vorrang gegenüber der zentralen Konfiguration.
