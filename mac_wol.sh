@@ -18,7 +18,7 @@
 SERVER_MAC="50:9A:4C:49:37:29"
 
 # IP-Adresse des Medienservers
-SERVER_IP="192.168.1.100"
+SERVER_IP="192.168.1.200"
 
 # ---------------------------------------------------------------------------
 # Wake-on-LAN per perl (kein extra Tool nötig)
