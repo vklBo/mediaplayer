@@ -6,6 +6,9 @@
 excluded_folders.txt
 genres.txt
 
+# Referenzfotos für Gesichtserkennung (personenbezogene Daten, nicht ins Repo)
+faces/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
