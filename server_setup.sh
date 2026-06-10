@@ -63,11 +63,15 @@ systemctl enable ssh
 systemctl start  ssh
 echo "      ✓ SSH aktiviert (Port 22)"
 
-# Python-Bibliotheken (Mediaplayer + QLab-Kollektor + Web-UI)
-pip3 install --break-system-packages pillow imagehash flask 2>/dev/null || \
-pip3 install pillow imagehash flask
+# Python-Bibliotheken (Mediaplayer + QLab-Kollektor + Web-UI + Gesichtserkennung)
+pip3 install --break-system-packages pillow imagehash flask deepface tf-keras 2>/dev/null || \
+pip3 install pillow imagehash flask deepface tf-keras
 
 echo "      ✓ Pakete installiert"
+
+# Faces-Verzeichnis für Gesichtserkennung anlegen
+mkdir -p "/home/$TAF_USER/mediaplayer/faces"
+echo "      ✓ faces/ angelegt (Referenzfotos für Personenausschluss)"
 
 # ---------------------------------------------------------------------------
 # 2. Medienordner anlegen
@@ -314,4 +318,10 @@ echo "     python3 $SYNC_SCRIPT_DIR/sync_onedrive.py"
 echo ""
 echo "  5. WoL auf diesem Rechner im BIOS aktivieren"
 echo "     (Kabelverbindung zum UDM-SE nötig)"
+echo ""
+echo "  6. Personen ausblenden (optional):"
+echo "     mkdir ~/mediaplayer/faces/<name>"
+echo "     # Referenzfotos hineinkopieren"
+echo "     python3 ~/mediaplayer/face_exclude.py           # Vorschau"
+echo "     python3 ~/mediaplayer/face_exclude.py --apply   # Anwenden"
 echo ""

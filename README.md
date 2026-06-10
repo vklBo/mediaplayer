@@ -414,6 +414,66 @@ Ergebnisse in `quality_scores.json` je Produktionsordner – werden mit Syncthin
 
 ---
 
+## Personen ausblenden (Gesichtserkennung)
+
+Bestimmte Personen können automatisch aus allen Diashows ausgeblendet werden.
+Das Skript `face_exclude.py` vergleicht alle Bilder gegen Referenzfotos und
+trägt Treffer in `excluded.txt` ein. Es läuft auf dem Server und wird
+**manuell angestossen** – nie automatisch.
+
+### Einrichtung
+
+```bash
+# Verzeichnis anlegen (bereits durch server_setup.sh erstellt)
+mkdir -p ~/mediaplayer/faces/<name>
+
+# Referenzfotos hineinkopieren (mehrere Fotos = bessere Erkennung)
+cp foto1.jpg foto2.jpg ~/mediaplayer/faces/<name>/
+```
+
+### Ausführen
+
+```bash
+# Vorschau – alle Personen in faces/ prüfen, nichts schreiben
+python3 ~/mediaplayer/face_exclude.py
+
+# Nur eine bestimmte Person prüfen
+python3 ~/mediaplayer/face_exclude.py --ref <name>
+
+# Treffer in excluded.txt eintragen
+python3 ~/mediaplayer/face_exclude.py --apply
+
+# Anderen Medienordner (z.B. lokal auf Mac)
+python3 ~/mediaplayer/face_exclude.py --media /Users/vk/media
+```
+
+### Ausgabe (Vorschau)
+
+```
+Person: alex
+==============================
+  2024-25/Faust (3 Treffer):
+    - bild001.jpg
+    - bild047.jpg
+    - bild112.jpg
+
+  2023-24/Hamlet (1 Treffer):
+    - bild003.jpg
+```
+
+### Hinweise
+
+- **Threshold:** Standard 0.45 – großzügig (lieber zu viele als zu wenige).
+  Mit `--threshold 0.35` strenger, mit `--threshold 0.55` noch großzügiger.
+- **Referenzfotos:** Je mehr und vielfältiger (verschiedene Winkel, Beleuchtungen),
+  desto besser die Erkennungsrate bei Theaterbeleuchtung.
+- **Datenschutz:** Der `faces/`-Ordner ist in `.gitignore` – Referenzfotos
+  werden nie ins Repository eingecheckt.
+- **Erster Lauf:** DeepFace lädt beim ersten Start das Facenet512-Modell herunter
+  (~250 MB) – das dauert einmalig etwas länger.
+
+---
+
 ## Konfigurationsübersicht
 
 ### `mediaplayer_app.py`
@@ -569,3 +629,6 @@ journalctl -u taf-wol.service
 | `update_to_release.sh` | Server + Pi | Beim Start auf neueste Release (Git-Tag) umstellen |
 | `mac_wol.sh` | MacBook | Server per WoL wecken (perl, kein Python nötig) |
 | `mac_wol_setup.sh` | MacBook | launchd-Agent für automatischen WoL einrichten |
+| `face_exclude.py` | Server | Personen per Gesichtserkennung aus Diashows ausblenden |
+| `taf-pull.sh` | Server + Pi | Manuelles Git-Update aus detached HEAD |
+| `Anleitung_Mediaplayer.md` | – | Benutzeranleitung für Theatermitarbeiter |
